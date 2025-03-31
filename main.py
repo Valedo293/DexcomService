@@ -12,9 +12,17 @@ app = Flask(__name__)
 USERNAME = os.getenv("DEXCOM_USERNAME")
 PASSWORD = os.getenv("DEXCOM_PASSWORD")
 
+# Stampa per il debug per verificare che le variabili siano caricate correttamente
+print(f"USERNAME: {USERNAME}")
+print(f"PASSWORD: {PASSWORD}")
+
 @app.route("/glicemia")
 def glicemia():
     try:
+        # Verifica che le variabili siano presenti prima di usare Dexcom
+        if not USERNAME or not PASSWORD:
+            raise ValueError("Username o password mancanti")
+
         dexcom = Dexcom(USERNAME, PASSWORD, ous=True)
         reading = dexcom.get_current_glucose_reading()
 
