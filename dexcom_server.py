@@ -1,12 +1,21 @@
 from flask import Flask, jsonify
 from pydexcom import Dexcom
 from datetime import datetime
+from flask_cors import CORS  # Importa CORS
+from dotenv import load_dotenv
+import os
+
+# Carica le variabili d'ambiente dal file .env
+load_dotenv()
 
 app = Flask(__name__)
 
-# Inserisci qui le credenziali dell'account Dexcom principale (quello di Emanuele)
-USERNAME = "emamaceri"
-PASSWORD = "Emanuele.08"
+# Abilita CORS su tutte le route
+CORS(app)
+
+# Recupera le credenziali dell'account Dexcom dalle variabili d'ambiente
+USERNAME = os.getenv("DEXCOM_USERNAME")
+PASSWORD = os.getenv("DEXCOM_PASSWORD")
 
 @app.route("/glicemia")
 def glicemia():
