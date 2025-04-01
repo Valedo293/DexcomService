@@ -37,7 +37,7 @@ def glicemia():
 
 # Funzione per eseguire il ping differito
 def esegui_ping(distanza_minuti):
-    time.sleep(distanza_minuti * 60)
+    time.sleep(10)
     try:
         dexcom = Dexcom(USERNAME, PASSWORD, ous=True)
         reading = dexcom.get_current_glucose_reading()
