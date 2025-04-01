@@ -6,7 +6,7 @@ import os
 import requests
 from datetime import datetime
 
-# Carica variabili dal file .env
+# Carica le variabili dal file .env
 load_dotenv()
 
 USERNAME = os.getenv("DEXCOM_USERNAME")
@@ -65,6 +65,25 @@ def ping_cron():
             return jsonify({"errore": f"Errore Google Sheet: {res.text}"}), 500
 
     except Exception as e:
+        return jsonify({"errore": str(e)}), 500
+
+# Endpoint warmup: sveglia Render ma non salva nulla
+@app.route("/ping-warmup", methods=["GET"])
+def ping_warmup():
+    try:
+        distanza_minuti = int(request.args.get("t", 0))
+
+        if distanza_minuti not in [60, 90, 180]:
+            raise ValueError("Parametro 't' non valido. Usa t=60, 90 o 180.")
+
+        dexcom = Dexcom(USERNAME, PASSWORD, ous=True)
+        reading = dexcom.get_current_glucose_reading()
+
+        print(f"✅ Warmup t+{distanza_minuti}: {reading.value} mg/dl - {reading.trend_description}")
+        return jsonify({"messaggio": f"✅ Warmup t+{distanza_minuti} eseguito."})
+
+    except Exception as e:
+        print(f"❌ Errore warmup t+{distanza_minuti}:", str(e))
         return jsonify({"errore": str(e)}), 500
 
 # Avvio server
