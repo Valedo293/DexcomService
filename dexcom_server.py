@@ -3,8 +3,6 @@ from pydexcom import Dexcom
 from dotenv import load_dotenv
 from flask_cors import CORS
 import os
-import threading
-import time
 import requests
 from datetime import datetime
 
@@ -35,10 +33,15 @@ def glicemia():
     except Exception as e:
         return jsonify({"errore": str(e)}), 500
 
-# Funzione per eseguire il ping differito
-def esegui_ping(distanza_minuti):
-    time.sleep(distanza_minuti * 60)
+# Endpoint per cron job: salva ping t+60, 90 o 180
+@app.route("/ping", methods=["GET"])
+def ping_cron():
     try:
+        distanza_minuti = int(request.args.get("t", 0))
+
+        if distanza_minuti not in [60, 90, 180]:
+            raise ValueError("Parametro 't' non valido. Usa t=60, 90 o 180.")
+
         dexcom = Dexcom(USERNAME, PASSWORD, ous=True)
         reading = dexcom.get_current_glucose_reading()
 
@@ -57,21 +60,10 @@ def esegui_ping(distanza_minuti):
         )
 
         if res.status_code == 200:
-            print(f"✅ Ping t+{distanza_minuti} min salvato.")
+            return jsonify({"messaggio": f"✅ Ping t+{distanza_minuti} min salvato."})
         else:
-            print(f"❌ Errore salvataggio t+{distanza_minuti}: {res.text}")
+            return jsonify({"errore": f"Errore Google Sheet: {res.text}"}), 500
 
-    except Exception as e:
-        print(f"❌ Errore ping t+{distanza_minuti} min:", str(e))
-
-# Endpoint per avviare i ping
-@app.route("/ping-postprandiale", methods=["POST"])
-def avvia_ping():
-    try:
-        for minuti in [60, 90, 180]:
-            threading.Thread(target=esegui_ping, args=(minuti,)).start()
-
-        return jsonify({"messaggio": "✅ Ping post-prandiali programmati."})
     except Exception as e:
         return jsonify({"errore": str(e)}), 500
 
