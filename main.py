@@ -2,6 +2,7 @@ from flask import Flask, jsonify, request
 from pydexcom import Dexcom
 from dotenv import load_dotenv
 from flask_cors import CORS
+from apscheduler.schedulers.background import BackgroundScheduler
 import os
 import requests
 from datetime import datetime
@@ -14,10 +15,12 @@ PASSWORD = os.getenv("DEXCOM_PASSWORD")
 app = Flask(__name__)
 CORS(app)
 
+scheduler = BackgroundScheduler()
+scheduler.start()
+
 def invia_ping(distanza_minuti):
     try:
         print(f"⏱️ Esecuzione ping t+{distanza_minuti} min")
-
         dexcom = Dexcom(USERNAME, PASSWORD, ous=True)
         reading = dexcom.get_current_glucose_reading()
 
@@ -43,19 +46,42 @@ def invia_ping(distanza_minuti):
     except Exception as e:
         print(f"❌ Errore ping t+{distanza_minuti}:", str(e))
 
-@app.route("/ping", methods=["GET"])
-def ping_cron():
+
+@app.route("/avvia-ping", methods=["POST"])
+def avvia_ping():
     try:
-        distanza_minuti = int(request.args.get("t", 0))
+        print("🚀 Attivazione ping da salvataggio pasto...")
 
-        if distanza_minuti not in [60, 90, 180]:
-            raise ValueError("Parametro 't' non valido. Usa t=60, 90 o 180.")
+        now = datetime.now()
+        for minuti in [60, 90, 180]:
+            run_time = now.replace(second=0, microsecond=0) + timedelta(minutes=minuti)
+            scheduler.add_job(
+                invia_ping,
+                'date',
+                run_date=run_time,
+                args=[minuti],
+                id=f"ping_{run_time.strftime('%H%M')}",
+                replace_existing=True
+            )
 
-        invia_ping(distanza_minuti)
-        return jsonify({"messaggio": f"✅ Ping t+{distanza_minuti} eseguito."})
-
+        return jsonify({"messaggio": "✅ Ping programmati per t+60, 90, 180 minuti."})
     except Exception as e:
         return jsonify({"errore": str(e)}), 500
+
+
+@app.route("/glicemia", methods=["GET"])
+def glicemia():
+    try:
+        dexcom = Dexcom(USERNAME, PASSWORD, ous=True)
+        reading = dexcom.get_current_glucose_reading()
+        return jsonify({
+            "glicemia": reading.value,
+            "trend": reading.trend_description,
+            "timestamp": reading.time.strftime("%Y-%m-%d %H:%M:%S")
+        })
+    except Exception as e:
+        return jsonify({"errore": str(e)}), 500
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5001)
