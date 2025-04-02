@@ -6,6 +6,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 import os
 import requests
 from datetime import datetime
+from datetime import datetime, timedelta
 
 # Carica variabili ambiente
 load_dotenv()
