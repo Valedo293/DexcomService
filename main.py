@@ -5,45 +5,28 @@ from flask_cors import CORS
 import os
 import requests
 from datetime import datetime
+import threading
+import time
 
-# Carica le variabili dal file .env
+# Carica variabili ambiente
 load_dotenv()
-
 USERNAME = os.getenv("DEXCOM_USERNAME")
 PASSWORD = os.getenv("DEXCOM_PASSWORD")
 
 app = Flask(__name__)
 CORS(app)
 
-# Endpoint: glicemia attuale
-@app.route("/glicemia")
-def glicemia():
+def invia_ping(distanza_minuti, warmup=False):
     try:
-        if not USERNAME or not PASSWORD:
-            raise ValueError("Username o password mancanti")
+        tipo_ping = "WARMUP" if warmup else "PING REALE"
+        print(f"⏱️ Esecuzione {tipo_ping} t+{distanza_minuti} min")
 
         dexcom = Dexcom(USERNAME, PASSWORD, ous=True)
         reading = dexcom.get_current_glucose_reading()
 
-        return jsonify({
-            "glicemia": reading.value,
-            "trend": reading.trend_description,
-            "timestamp": reading.time.strftime("%Y-%m-%d %H:%M:%S")
-        })
-    except Exception as e:
-        return jsonify({"errore": str(e)}), 500
-
-# Endpoint: ping vero (salva su Google Sheet)
-@app.route("/ping", methods=["GET"])
-def ping_cron():
-    try:
-        distanza_minuti = int(request.args.get("t", 0))
-
-        if distanza_minuti not in [60, 90, 180]:
-            raise ValueError("Parametro 't' non valido. Usa t=60, 90 o 180.")
-
-        dexcom = Dexcom(USERNAME, PASSWORD, ous=True)
-        reading = dexcom.get_current_glucose_reading()
+        if warmup:
+            print(f"✅ Warmup t+{distanza_minuti}: {reading.value} mg/dl - {reading.trend_description}")
+            return
 
         payload = {
             "data": datetime.now().strftime("%d/%m/%Y %H:%M"),
@@ -60,32 +43,31 @@ def ping_cron():
         )
 
         if res.status_code == 200:
-            return jsonify({"messaggio": f"✅ Ping t+{distanza_minuti} min salvato."})
+            print(f"✅ Ping t+{distanza_minuti} salvato.")
         else:
-            return jsonify({"errore": f"Errore Google Sheet: {res.text}"}), 500
+            print(f"❌ Errore Google Sheet t+{distanza_minuti}: {res.text}")
 
     except Exception as e:
-        return jsonify({"errore": str(e)}), 500
+        print(f"❌ Errore {tipo_ping} t+{distanza_minuti}:", str(e))
 
-# Endpoint: warmup (non salva nulla, serve solo a risvegliare Render)
-@app.route("/ping-warmup", methods=["GET"])
-def ping_warmup():
+def programma_ping(distanza_minuti):
+    # Ping warmup 5 minuti prima
+    warmup_time = max(distanza_minuti - 5, 0)
+    threading.Timer(warmup_time * 60, invia_ping, args=(distanza_minuti, True)).start()
+
+    # Ping vero
+    threading.Timer(distanza_minuti * 60, invia_ping, args=(distanza_minuti, False)).start()
+
+@app.route("/programma-ping", methods=["GET"])
+def programma_ping_endpoint():
     try:
-        distanza_minuti = int(request.args.get("t", 0))
+        minuti = [10, 20, 45]
+        for m in minuti:
+            programma_ping(m)
 
-        if distanza_minuti not in [60, 90, 180]:
-            raise ValueError("Parametro 't' non valido. Usa t=60, 90 o 180.")
-
-        dexcom = Dexcom(USERNAME, PASSWORD, ous=True)
-        reading = dexcom.get_current_glucose_reading()
-
-        print(f"✅ Warmup t+{distanza_minuti}: {reading.value} mg/dl - {reading.trend_description}")
-        return jsonify({"messaggio": f"✅ Warmup t+{distanza_minuti} eseguito."})
-
+        return jsonify({"messaggio": "✅ Ping programmati: 10, 20, 45 minuti con warmup 5 minuti prima."})
     except Exception as e:
-        print(f"❌ Errore warmup t+{distanza_minuti}:", str(e))
         return jsonify({"errore": str(e)}), 500
 
-# Avvio server
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5001)
