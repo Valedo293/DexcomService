@@ -33,15 +33,9 @@ def glicemia():
     except Exception as e:
         return jsonify({"errore": str(e)}), 500
 
-# Endpoint per cron job: salva ping t+60, 90 o 180
-@app.route("/ping", methods=["GET"])
-def ping_cron():
+# Funzione per inviare i ping al backend e al Google Sheet
+def invia_ping(distanza_minuti):
     try:
-        distanza_minuti = int(request.args.get("t", 0))
-
-        if distanza_minuti not in [60, 90, 180]:
-            raise ValueError("Parametro 't' non valido. Usa t=60, 90 o 180.")
-
         dexcom = Dexcom(USERNAME, PASSWORD, ous=True)
         reading = dexcom.get_current_glucose_reading()
 
@@ -60,6 +54,7 @@ def ping_cron():
         )
 
         if res.status_code == 200:
+            print(f"✅ Ping t+{distanza_minuti} min salvato.")
             return jsonify({"messaggio": f"✅ Ping t+{distanza_minuti} min salvato."})
         else:
             return jsonify({"errore": f"Errore Google Sheet: {res.text}"}), 500
@@ -67,23 +62,26 @@ def ping_cron():
     except Exception as e:
         return jsonify({"errore": str(e)}), 500
 
-# Endpoint warmup: sveglia Render ma non salva nulla
-@app.route("/ping-warmup", methods=["GET"])
-def ping_warmup():
+# Endpoint per i ping programmati: 10, 20, 45 minuti
+@app.route("/ping", methods=["GET"])
+def ping():
     try:
+        # Otteniamo il tempo da un parametro di query (in minuti)
         distanza_minuti = int(request.args.get("t", 0))
 
-        if distanza_minuti not in [60, 90, 180]:
-            raise ValueError("Parametro 't' non valido. Usa t=60, 90 o 180.")
+        if distanza_minuti not in [10, 20, 45]:
+            raise ValueError("Parametro 't' non valido. Usa t=10, 20, 45.")
 
-        dexcom = Dexcom(USERNAME, PASSWORD, ous=True)
-        reading = dexcom.get_current_glucose_reading()
+        # Risveglio prima del ping
+        risveglio = distanza_minuti - 2
+        invia_ping(risveglio)  # Ping di risveglio
 
-        print(f"✅ Warmup t+{distanza_minuti}: {reading.value} mg/dl - {reading.trend_description}")
-        return jsonify({"messaggio": f"✅ Warmup t+{distanza_minuti} eseguito."})
+        # Invio del ping programmato
+        invia_ping(distanza_minuti)
+
+        return jsonify({"messaggio": f"✅ Ping t+{distanza_minuti} min e risveglio t+{risveglio} min eseguiti."})
 
     except Exception as e:
-        print(f"❌ Errore warmup t+{distanza_minuti}:", str(e))
         return jsonify({"errore": str(e)}), 500
 
 # Avvio server
