@@ -3,7 +3,6 @@ from pydexcom import Dexcom
 from dotenv import load_dotenv
 from flask_cors import CORS
 from apscheduler.schedulers.background import BackgroundScheduler
-from supabase import create_client, Client
 import os
 import requests
 from datetime import datetime, timedelta
@@ -15,58 +14,68 @@ PASSWORD = os.getenv("DEXCOM_PASSWORD")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-
 app = Flask(__name__)
 CORS(app)
 
 scheduler = BackgroundScheduler()
 scheduler.start()
 
-# Dizionario per tenere traccia degli ID pasto da aggiornare
-task_mapping = {}
+headers = {
+    "apikey": SUPABASE_KEY,
+    "Authorization": f"Bearer {SUPABASE_KEY}",
+    "Content-Type": "application/json",
+}
 
-def invia_ping(id_pasto, distanza_minuti):
+def aggiorna_valore_tempo(id_pasto, campo, valore):
     try:
-        print(f"⏱️ Esecuzione ping t+{distanza_minuti} min per ID: {id_pasto}")
+        url = f"{SUPABASE_URL}/rest/v1/analisi_dati?id=eq.{id_pasto}"
+        payload = {campo: valore}
+        res = requests.patch(url, headers=headers, json=payload)
+
+        if res.status_code in [200, 204]:
+            print(f"✅ {campo} aggiornato con successo.")
+        else:
+            print(f"❌ Errore aggiornamento {campo}: {res.text}")
+    except Exception as e:
+        print(f"❌ Errore durante la chiamata PATCH per {campo}:", str(e))
+
+def invia_ping(id_pasto, distanza_minuti, campo):
+    try:
+        print(f"⏱️ Esecuzione ping t+{distanza_minuti} min per {campo}")
         dexcom = Dexcom(USERNAME, PASSWORD, ous=True)
         reading = dexcom.get_current_glucose_reading()
-
-        campo = f"t{[60, 120, 180].index(distanza_minuti) + 1}"
         valore = reading.value
-
-        result = supabase.table("analisi_dati").update({campo: valore}).eq("id", id_pasto).execute()
-
-        if result.data:
-            print(f"✅ Glicemia {campo} salvata su Supabase: {valore}")
-        else:
-            print(f"❌ Errore salvataggio Supabase {campo}: {result}")
-
+        aggiorna_valore_tempo(id_pasto, campo, valore)
     except Exception as e:
-        print(f"❌ Errore ping t+{distanza_minuti}:", str(e))
+        print(f"❌ Errore ping t+{distanza_minuti} ({campo}):", str(e))
 
 @app.route("/pianifica-ping", methods=["POST"])
 def pianifica_ping():
     try:
-        body = request.get_json()
-        id_pasto = body.get("id")
-
+        dati = request.get_json()
+        id_pasto = dati.get("id")
         if not id_pasto:
-            return jsonify({"errore": "ID pasto mancante"}), 400
+            return jsonify({"errore": "ID del pasto mancante"}), 400
 
         now = datetime.now()
-        for minuti in [60, 120, 180]:
-            run_time = now.replace(second=0, microsecond=0) + timedelta(minutes=minuti)
+        ping_schedule = [
+            (60, "t1"),
+            (120, "t2"),
+            (180, "t3"),
+        ]
+
+        for minuti, campo in ping_schedule:
+            run_time = now + timedelta(minutes=minuti)
             scheduler.add_job(
                 invia_ping,
-                'date',
+                "date",
                 run_date=run_time,
-                args=[id_pasto, minuti],
-                id=f"ping_{id_pasto}_{minuti}",
+                args=[id_pasto, minuti, campo],
+                id=f"ping_{id_pasto}_{campo}",
                 replace_existing=True
             )
 
-        return jsonify({"messaggio": "✅ Ping programmati per t+60, 120, 180 minuti."})
+        return jsonify({"messaggio": "✅ Ping programmati per t1, t2, t3"})
     except Exception as e:
         return jsonify({"errore": str(e)}), 500
 
