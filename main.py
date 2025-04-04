@@ -41,6 +41,7 @@ def aggiorna_valore_tempo(id_pasto, campo, valore):
         print(f"❌ Errore PATCH Supabase per {campo}: {str(e)}")
 
 def invia_ping(id_pasto, distanza_minuti, campo):
+    print(f"🔍 Esecuzione di invia_ping per {campo}, id_pasto={id_pasto}")  # Log di debug per vedere se la funzione è chiamata
     try:
         print(f"⏱️ Esecuzione ping t+{distanza_minuti} min per {campo}, id_pasto={id_pasto}")
         dexcom = Dexcom(USERNAME, PASSWORD, ous=True)
