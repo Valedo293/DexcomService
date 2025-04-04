@@ -54,7 +54,6 @@ def invia_ping(id_pasto, distanza_minuti, campo):
     except Exception as e:
         print(f"❌ Errore invio ping {campo}: {e}")
 
-# Event listener per vedere se il job è eseguito
 def job_listener(event):
     if event.exception:
         print(f"❌ Il job {event.job_id} ha fallito: {event.exception}")
@@ -63,7 +62,6 @@ def job_listener(event):
 
 scheduler.add_listener(job_listener, EVENT_JOB_EXECUTED | EVENT_JOB_ERROR)
 
-# Endpoint di pianificazione
 @app.route("/pianifica-ping", methods=["POST"])
 def pianifica_ping():
     try:
@@ -92,7 +90,6 @@ def pianifica_ping():
         print(f"❌ Errore in /pianifica-ping: {e}")
         return jsonify({"errore": str(e)}), 500
 
-# Endpoint lista jobs
 @app.route("/jobs", methods=["GET"])
 def lista_job_schedulati():
     try:
@@ -106,7 +103,6 @@ def lista_job_schedulati():
     except Exception as e:
         return jsonify({"errore": str(e)}), 500
 
-# Endpoint test diretto
 @app.route("/esegui-subito", methods=["POST"])
 def esegui_ping_subito():
     try:
@@ -126,11 +122,26 @@ def esegui_ping_subito():
     except Exception as e:
         return jsonify({"errore": str(e)}), 500
 
+@app.route("/glicemia", methods=["GET"])
+def ottieni_glicemia():
+    try:
+        dexcom = Dexcom(USERNAME, PASSWORD, ous=True)
+        reading = dexcom.get_current_glucose_reading()
+        if reading:
+            return jsonify({
+                "glicemia": float(reading.value),
+                "trend": reading.trend_description,
+                "timestamp": reading.datetime.strftime("%Y-%m-%d %H:%M:%S")
+            })
+        else:
+            return jsonify({"errore": "Nessuna lettura disponibile"}), 404
+    except Exception as e:
+        return jsonify({"errore": str(e)}), 500
+
 # TEST JOB per Render
 def job_di_test():
     print("✅ JOB DI TEST ESEGUITO (Render sta mantenendo attivo lo scheduler)")
 
-# Schedulo job di test tra 2 minuti dal boot
 scheduler.add_job(
     job_di_test,
     "date",
@@ -138,8 +149,3 @@ scheduler.add_job(
     id="job_test_scheduler"
 )
 print("🧪 Job di test schedulato per 2 minuti dopo l’avvio")
-
-# RIMUOVI queste due righe se usi GUNICORN in produzione
-# if __name__ == "__main__":
-#     print("🚀 Avvio Flask in locale")
-#     app.run(host="0.0.0.0", port=5001)
