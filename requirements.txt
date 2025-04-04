@@ -17,3 +17,4 @@ zipp==3.21.0
 flask-cors
 APScheduler 
 gunicorn
+pytz
