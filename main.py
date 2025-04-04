@@ -18,8 +18,8 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 app = Flask(__name__)
 CORS(app)
 
-# Configura lo scheduler per l'ora locale (assicurati che il fuso orario sia corretto)
-scheduler = BackgroundScheduler(timezone="Europe/Rome")  # Imposta il fuso orario italiano
+# Configura lo scheduler per l'ora locale
+scheduler = BackgroundScheduler(timezone="Europe/Rome")  # Impostiamo il fuso orario italiano
 scheduler.start()
 
 # Headers per comunicare con Supabase
@@ -36,6 +36,8 @@ def aggiorna_valore_tempo(id_pasto, campo, valore):
         payload = {campo: valore}
         res = requests.patch(url, headers=headers, json=payload)
 
+        print(f"🔄 Risposta Supabase: Status Code {res.status_code}, Testo: {res.text}")
+
         if res.status_code in [200, 204]:
             print(f"✅ {campo} aggiornato con valore {valore}")
         else:
@@ -49,18 +51,17 @@ def invia_ping(id_pasto, distanza_minuti, campo):
         print(f"⏱️ Esecuzione ping t+{distanza_minuti} min per {campo}, id_pasto={id_pasto}")
         dexcom = Dexcom(USERNAME, PASSWORD, ous=True)
         reading = dexcom.get_current_glucose_reading()
+
+        if reading is None:
+            print(f"⚠ Nessuna lettura disponibile da Dexcom per {campo}")
+            return
+
         print(f"📡 Risposta Dexcom: glicemia={reading.value}, trend={reading.trend_description}, timestamp={reading.time}")  # Log dettagliato
 
-        if reading is not None:
-            valore = reading.value
-            try:
-                valore = float(valore)
-                print(f"📈 Aggiornamento glicemia: {valore}")
-                aggiorna_valore_tempo(id_pasto, campo, valore)
-            except (ValueError, TypeError):
-                print(f"⚠ Valore non numerico o invalido per {campo}: {reading.value}")
-        else:
-            print(f"⚠ Nessuna lettura disponibile da Dexcom per {campo}")
+        valore = float(reading.value)  # Usa solo il valore numerico
+        print(f"📈 Aggiornamento glicemia: {valore}")
+        aggiorna_valore_tempo(id_pasto, campo, valore)
+        
     except Exception as e:
         print(f"❌ Errore durante il ping t+{distanza_minuti} ({campo}), id_pasto={id_pasto}: {str(e)}")
 
@@ -79,6 +80,7 @@ def pianifica_ping():
         dati = request.get_json()
         id_pasto = dati.get("id")
         if not id_pasto:
+            print("❌ ID del pasto mancante!")
             return jsonify({"errore": "ID del pasto mancante"}), 400
 
         print(f"📅 Pianificazione ping per il pasto {id_pasto}")
@@ -92,19 +94,24 @@ def pianifica_ping():
         for minuti, campo in ping_schedule:
             run_time = now + timedelta(minutes=minuti)
             print(f"🕒 Scheduling ping per {campo} alle {run_time}")
-            scheduler.add_job(
-                invia_ping,
-                "date",
-                run_date=run_time,
-                args=[id_pasto, minuti, campo],
-                id=f"ping_{id_pasto}_{campo}",
-                replace_existing=True
-            )
+
+            try:
+                job = scheduler.add_job(
+                    invia_ping,
+                    "date",
+                    run_date=run_time,
+                    args=[id_pasto, minuti, campo],
+                    id=f"ping_{id_pasto}_{campo}",
+                    replace_existing=True
+                )
+                print(f"✅ Job aggiunto per {campo}: {job.id} alle {run_time}")
+            except Exception as e:
+                print(f"❌ Errore nell'aggiungere il job per {campo}: {str(e)}")
 
         print(f"✅ Ping programmati per il pasto {id_pasto}")
         return jsonify({"messaggio": "✅ Ping programmati per t1, t2, t3"})
     except Exception as e:
-        print(f"❌ Errore pianificazione ping per {id_pasto}: {str(e)}")
+        print(f"❌ Errore nella pianificazione dei job: {str(e)}")
         return jsonify({"errore": str(e)}), 500
 
 @app.route("/glicemia", methods=["GET"])
@@ -115,6 +122,7 @@ def glicemia():
         print(f"📡 Risposta glicemia: {reading.value}, trend={reading.trend_description}, timestamp={reading.time}")  # Log aggiuntivo
 
         if reading is None:
+            print("❌ Nessuna lettura disponibile da Dexcom")
             return jsonify({"errore": "Nessuna lettura disponibile da Dexcom"}), 404
         return jsonify({
             "glicemia": reading.value,
@@ -122,7 +130,7 @@ def glicemia():
             "timestamp": reading.time.strftime("%Y-%m-%d %H:%M:%S")
         })
     except Exception as e:
-        print("❌ Errore nella glicemia:", str(e))
+        print(f"❌ Errore nella glicemia: {str(e)}")
         return jsonify({"errore": str(e)}), 500
 
 @app.route("/jobs", methods=["GET"])
@@ -143,4 +151,5 @@ def lista_job_schedulati():
         return jsonify({"errore": str(e)}), 500
 
 if __name__ == "__main__":
+    print("🚀 Server avviato!")
     app.run(host="0.0.0.0", port=5001)
