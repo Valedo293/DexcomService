@@ -3,6 +3,7 @@ from pydexcom import Dexcom
 from dotenv import load_dotenv
 from flask_cors import CORS
 from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR
 import os
 import requests
 from datetime import datetime, timedelta
@@ -17,9 +18,11 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 app = Flask(__name__)
 CORS(app)
 
-scheduler = BackgroundScheduler()
+# Configura lo scheduler per l'ora locale (assicurati che il fuso orario sia corretto)
+scheduler = BackgroundScheduler(timezone="Europe/Rome")  # Imposta il fuso orario italiano
 scheduler.start()
 
+# Headers per comunicare con Supabase
 headers = {
     "apikey": SUPABASE_KEY,
     "Authorization": f"Bearer {SUPABASE_KEY}",
@@ -41,7 +44,7 @@ def aggiorna_valore_tempo(id_pasto, campo, valore):
         print(f"❌ Errore PATCH Supabase per {campo}: {str(e)}")
 
 def invia_ping(id_pasto, distanza_minuti, campo):
-    print(f"🔍 Esecuzione di invia_ping per {campo}, id_pasto={id_pasto}")  # Log di debug per vedere se la funzione è chiamata
+    print(f"🔍 Esecuzione di invia_ping per {campo}, id_pasto={id_pasto}")  # Log di debug
     try:
         print(f"⏱️ Esecuzione ping t+{distanza_minuti} min per {campo}, id_pasto={id_pasto}")
         dexcom = Dexcom(USERNAME, PASSWORD, ous=True)
@@ -60,6 +63,15 @@ def invia_ping(id_pasto, distanza_minuti, campo):
             print(f"⚠ Nessuna lettura disponibile da Dexcom per {campo}")
     except Exception as e:
         print(f"❌ Errore durante il ping t+{distanza_minuti} ({campo}), id_pasto={id_pasto}: {str(e)}")
+
+# Event listener per monitorare l'esecuzione dei job
+def job_listener(event):
+    if event.exception:
+        print(f"❌ Il job {event.job_id} ha fallito!")
+    else:
+        print(f"✅ Il job {event.job_id} è stato eseguito correttamente!")
+
+scheduler.add_listener(job_listener, EVENT_JOB_EXECUTED | EVENT_JOB_ERROR)
 
 @app.route("/pianifica-ping", methods=["POST"])
 def pianifica_ping():
