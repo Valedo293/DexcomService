@@ -5,6 +5,7 @@ from flask_cors import CORS
 import os
 import requests
 from threading import Timer
+from datetime import datetime
 
 # Carica variabili ambiente
 load_dotenv()
@@ -57,9 +58,10 @@ def pianifica_ping():
 
         print(f"⏰ Programmazione ping per pasto {id_pasto}...")
 
-        Timer(0, invia_ping, args=[id_pasto, "t1"]).start()
-        Timer(2 * 60, invia_ping, args=[id_pasto, "t2"]).start()
-        Timer(4 * 60, invia_ping, args=[id_pasto, "t3"]).start()
+        # Ping: t1 (60 min), t2 (90 min), t3 (180 min)
+        Timer(60 * 60, invia_ping, args=[id_pasto, "t1"]).start()
+        Timer(90 * 60, invia_ping, args=[id_pasto, "t2"]).start()
+        Timer(180 * 60, invia_ping, args=[id_pasto, "t3"]).start()
 
         return jsonify({"messaggio": "Ping pianificati (via Timer)"})
     except Exception as e:
@@ -80,4 +82,5 @@ def ottieni_glicemia():
         else:
             return jsonify({"errore": "Nessuna lettura disponibile"}), 404
     except Exception as e:
+        print(f"❌ Errore in /glicemia: {e}")
         return jsonify({"errore": str(e)}), 500
