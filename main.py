@@ -44,8 +44,13 @@ def invia_ping(id_pasto, distanza_minuti, campo):
         print(f"⏱️ Esecuzione ping t+{distanza_minuti} min per {campo}")
         dexcom = Dexcom(USERNAME, PASSWORD, ous=True)
         reading = dexcom.get_current_glucose_reading()
+
         if reading is not None:
-            aggiorna_valore_tempo(id_pasto, campo, reading.value)
+            try:
+                valore = float(reading.value)  # Assicura che sia un numero
+                aggiorna_valore_tempo(id_pasto, campo, valore)
+            except ValueError:
+                print(f"❌ Valore non numerico per {campo}: {reading.value}")
         else:
             print(f"⚠ Nessuna lettura disponibile per il ping {campo}")
     except Exception as e:
