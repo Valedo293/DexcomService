@@ -46,7 +46,7 @@ def aggiorna_valore_tempo(id_pasto, campo, valore):
         print(f"❌ Errore PATCH Supabase per {campo}: {str(e)}")
 
 def invia_ping(id_pasto, distanza_minuti, campo):
-    print(f"🔍 Esecuzione di invia_ping per {campo}, id_pasto={id_pasto}")  # Log di debug
+    print(f"🔍 Debug: Esecuzione invia_ping per {campo}, id_pasto={id_pasto}")  # Log di debug dettagliato
     try:
         print(f"⏱️ Esecuzione ping t+{distanza_minuti} min per {campo}, id_pasto={id_pasto}")
         dexcom = Dexcom(USERNAME, PASSWORD, ous=True)
@@ -56,19 +56,25 @@ def invia_ping(id_pasto, distanza_minuti, campo):
             print(f"⚠ Nessuna lettura disponibile da Dexcom per {campo}")
             return
 
-        print(f"📡 Risposta Dexcom: glicemia={reading.value}, trend={reading.trend_description}, timestamp={reading.time}")  # Log dettagliato
+        # Log aggiuntivi per monitorare la risposta
+        print(f"📡 Risposta Dexcom: glicemia={reading.value}, trend={reading.trend_description}, timestamp={reading.time}")
 
-        valore = float(reading.value)  # Usa solo il valore numerico
-        print(f"📈 Aggiornamento glicemia: {valore}")
-        aggiorna_valore_tempo(id_pasto, campo, valore)
+        try:
+            valore = float(reading.value)  # Usa solo il valore numerico
+            print(f"📈 Aggiornamento glicemia: {valore}")
+            aggiorna_valore_tempo(id_pasto, campo, valore)
+        except Exception as e:
+            print(f"❌ Errore nella conversione del valore glicemia: {str(e)}")
         
+    except requests.exceptions.RequestException as e:
+        print(f"❌ Errore di rete durante il ping: {str(e)}")
     except Exception as e:
         print(f"❌ Errore durante il ping t+{distanza_minuti} ({campo}), id_pasto={id_pasto}: {str(e)}")
 
 # Event listener per monitorare l'esecuzione dei job
 def job_listener(event):
     if event.exception:
-        print(f"❌ Il job {event.job_id} ha fallito!")
+        print(f"❌ Il job {event.job_id} ha fallito: {event.exception}")
     else:
         print(f"✅ Il job {event.job_id} è stato eseguito correttamente!")
 
