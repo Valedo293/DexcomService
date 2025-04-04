@@ -7,23 +7,28 @@ from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR
 import os
 import requests
 from datetime import datetime, timedelta
-import pytz  # Import per gestire i fusi orari
+import pytz
 
 # Carica variabili ambiente
+print("🚀 Caricamento variabili ambiente...")
 load_dotenv()
 USERNAME = os.getenv("DEXCOM_USERNAME")
 PASSWORD = os.getenv("DEXCOM_PASSWORD")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
+print(f"🔐 USERNAME: {USERNAME}")
+print(f"🔐 PASSWORD: {'*' * len(PASSWORD) if PASSWORD else None}")
+print(f"🔗 SUPABASE_URL: {SUPABASE_URL}")
+print(f"🔑 SUPABASE_KEY: {'*' * len(SUPABASE_KEY) if SUPABASE_KEY else None}")
+
 app = Flask(__name__)
 CORS(app)
 
-# Configura lo scheduler per il fuso orario locale
 scheduler = BackgroundScheduler(timezone="Europe/Rome")
 scheduler.start()
+print("🕓 Scheduler avviato con timezone Europe/Rome")
 
-# Headers per comunicare con Supabase
 headers = {
     "apikey": SUPABASE_KEY,
     "Authorization": f"Bearer {SUPABASE_KEY}",
@@ -32,47 +37,50 @@ headers = {
 
 def aggiorna_valore_tempo(id_pasto, campo, valore):
     try:
-        print(f"🚀 Aggiornamento valore per {campo}, id_pasto={id_pasto}, valore={valore}")
+        print(f"🚀 [PATCH] Aggiorno Supabase -> Campo: {campo}, ID pasto: {id_pasto}, Valore: {valore}")
         url = f"{SUPABASE_URL}/rest/v1/analisi_dati?id=eq.{id_pasto}"
         payload = {campo: valore}
+        print(f"🔗 URL: {url}")
+        print(f"📦 Payload: {payload}")
+        print(f"📬 Headers: {headers}")
         res = requests.patch(url, headers=headers, json=payload)
-
-        print(f"🔄 Risposta Supabase: Status Code {res.status_code}, Testo: {res.text}")
+        print(f"📨 Risposta: Status {res.status_code} - Body: {res.text}")
 
         if res.status_code in [200, 204]:
-            print(f"✅ {campo} aggiornato con valore {valore}")
+            print(f"✅ Supabase aggiornato correttamente per {campo}")
         else:
-            print(f"❌ Errore aggiornamento {campo}: {res.text}")
+            print(f"❌ Errore aggiornamento Supabase: {res.status_code} - {res.text}")
     except Exception as e:
-        print(f"❌ Errore PATCH Supabase per {campo}: {str(e)}")
+        print(f"❌ Eccezione durante PATCH Supabase: {str(e)}")
 
 def invia_ping(id_pasto, distanza_minuti, campo):
-    print(f"🔍 Debug: Esecuzione invia_ping per {campo}, id_pasto={id_pasto}")  # Log di debug dettagliato
+    print(f"🔍 [PING] Invio ping per campo {campo}, ID pasto: {id_pasto}")
     try:
-        print(f"⏱️ Esecuzione ping t+{distanza_minuti} min per {campo}, id_pasto={id_pasto}")
+        print(f"🔑 Login a Dexcom con {USERNAME}")
         dexcom = Dexcom(USERNAME, PASSWORD, ous=True)
         reading = dexcom.get_current_glucose_reading()
 
         if reading is None:
-            print(f"⚠ Nessuna lettura disponibile da Dexcom per {campo}")
+            print(f"⚠️ Nessuna lettura disponibile da Dexcom")
             return
 
-        # Estrarre solo il valore glicemia
-        valore = float(reading.value)  # Usa solo il valore numerico della glicemia
-        print(f"📈 Aggiornamento glicemia: {valore}")
-        aggiorna_valore_tempo(id_pasto, campo, valore)
-        
-    except requests.exceptions.RequestException as e:
-        print(f"❌ Errore di rete durante il ping: {str(e)}")
-    except Exception as e:
-        print(f"❌ Errore durante il ping t+{distanza_minuti} ({campo}), id_pasto={id_pasto}: {str(e)}")
+        valore = float(reading.value)
+        trend = reading.trend_description
+        timestamp = reading.time.strftime("%Y-%m-%d %H:%M:%S")
 
-# Event listener per monitorare l'esecuzione dei job
+        print(f"📈 Dato ottenuto: {valore} mg/dl | Trend: {trend} | Time: {timestamp}")
+        aggiorna_valore_tempo(id_pasto, campo, valore)
+
+    except requests.exceptions.RequestException as e:
+        print(f"❌ Errore di rete durante invio ping: {str(e)}")
+    except Exception as e:
+        print(f"❌ Errore generico nel ping t+{distanza_minuti} min ({campo}) - ID pasto: {id_pasto} | Errore: {str(e)}")
+
 def job_listener(event):
     if event.exception:
-        print(f"❌ Il job {event.job_id} ha fallito: {event.exception}")
+        print(f"❌ JOB FALLITO: {event.job_id} | Errore: {event.exception}")
     else:
-        print(f"✅ Il job {event.job_id} è stato eseguito correttamente!")
+        print(f"✅ JOB ESEGUITO: {event.job_id}")
 
 scheduler.add_listener(job_listener, EVENT_JOB_EXECUTED | EVENT_JOB_ERROR)
 
@@ -80,23 +88,20 @@ scheduler.add_listener(job_listener, EVENT_JOB_EXECUTED | EVENT_JOB_ERROR)
 def pianifica_ping():
     try:
         dati = request.get_json()
+        print(f"📩 Ricevuto JSON: {dati}")
+
         id_pasto = dati.get("id")
         if not id_pasto:
-            print("❌ ID del pasto mancante!")
+            print("❌ Nessun ID pasto ricevuto")
             return jsonify({"errore": "ID del pasto mancante"}), 400
 
-        print(f"📅 Pianificazione ping per il pasto {id_pasto}")
-        now = datetime.now(pytz.timezone("Europe/Rome"))  # Orario locale Europe/Rome
-        ping_schedule = [
-            (10, "t1"),
-            (20, "t2"),
-            (30, "t3"),
-        ]
+        print(f"📅 Inizio pianificazione ping per pasto: {id_pasto}")
+        now = datetime.now(pytz.timezone("Europe/Rome"))
+        ping_schedule = [(10, "t1"), (20, "t2"), (30, "t3")]
 
         for minuti, campo in ping_schedule:
-            run_time = now + timedelta(minutes=minuti)  # Calcolo del run_time locale
-            print(f"🕒 Scheduling ping per {campo} alle {run_time}")
-
+            run_time = now + timedelta(minutes=minuti)
+            print(f"🕒 Scheduling job {campo} alle {run_time}")
             try:
                 job = scheduler.add_job(
                     invia_ping,
@@ -106,33 +111,40 @@ def pianifica_ping():
                     id=f"ping_{id_pasto}_{campo}",
                     replace_existing=True
                 )
-                print(f"✅ Job aggiunto per {campo}: {job.id} alle {run_time}")
+                print(f"✅ Job {campo} schedulato: {job.id} alle {run_time}")
             except Exception as e:
-                print(f"❌ Errore nell'aggiungere il job per {campo}: {str(e)}")
+                print(f"❌ Errore durante la creazione del job {campo}: {str(e)}")
 
-        print(f"✅ Ping programmati per il pasto {id_pasto}")
         return jsonify({"messaggio": "✅ Ping programmati per t1, t2, t3"})
+
     except Exception as e:
-        print(f"❌ Errore nella pianificazione dei job: {str(e)}")
+        print(f"❌ Errore durante /pianifica-ping: {str(e)}")
         return jsonify({"errore": str(e)}), 500
 
 @app.route("/glicemia", methods=["GET"])
 def glicemia():
     try:
+        print("📡 Richiesta lettura glicemia attuale da Dexcom")
         dexcom = Dexcom(USERNAME, PASSWORD, ous=True)
         reading = dexcom.get_current_glucose_reading()
-        print(f"📡 Risposta glicemia: {reading.value}, trend={reading.trend_description}, timestamp={reading.time}")  # Log aggiuntivo
 
         if reading is None:
-            print("❌ Nessuna lettura disponibile da Dexcom")
+            print("❌ Nessuna lettura disponibile")
             return jsonify({"errore": "Nessuna lettura disponibile da Dexcom"}), 404
+
+        valore = reading.value
+        trend = reading.trend_description
+        timestamp = reading.time.strftime("%Y-%m-%d %H:%M:%S")
+
+        print(f"📈 Glicemia attuale: {valore}, Trend: {trend}, Timestamp: {timestamp}")
         return jsonify({
-            "glicemia": reading.value,
-            "trend": reading.trend_description,
-            "timestamp": reading.time.strftime("%Y-%m-%d %H:%M:%S")
+            "glicemia": valore,
+            "trend": trend,
+            "timestamp": timestamp
         })
+
     except Exception as e:
-        print(f"❌ Errore nella glicemia: {str(e)}")
+        print(f"❌ Errore /glicemia: {str(e)}")
         return jsonify({"errore": str(e)}), 500
 
 @app.route("/jobs", methods=["GET"])
@@ -140,8 +152,9 @@ def lista_job_schedulati():
     try:
         jobs = scheduler.get_jobs()
         elenco = []
+        print(f"📋 Recupero jobs schedulati...")
         for job in jobs:
-            print(f"🔄 Job schedulato: {job.id} alle {job.next_run_time}")  # Log dei job programmati
+            print(f"🔄 Job: {job.id} | Next run: {job.next_run_time}")
             elenco.append({
                 "id": job.id,
                 "name": job.name,
@@ -149,9 +162,9 @@ def lista_job_schedulati():
             })
         return jsonify(elenco)
     except Exception as e:
-        print(f"❌ Errore nel recupero dei job schedulati: {str(e)}")
+        print(f"❌ Errore /jobs: {str(e)}")
         return jsonify({"errore": str(e)}), 500
 
 if __name__ == "__main__":
-    print("🚀 Server avviato!")
+    print("🚀 Avvio server Flask in modalità standalone...")
     app.run(host="0.0.0.0", port=5001)
