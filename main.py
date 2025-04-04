@@ -44,8 +44,10 @@ def invia_ping(id_pasto, distanza_minuti, campo):
         print(f"⏱️ Esecuzione ping t+{distanza_minuti} min per {campo}")
         dexcom = Dexcom(USERNAME, PASSWORD, ous=True)
         reading = dexcom.get_current_glucose_reading()
-        valore = reading.value
-        aggiorna_valore_tempo(id_pasto, campo, valore)
+        if reading is not None:
+            aggiorna_valore_tempo(id_pasto, campo, reading.value)
+        else:
+            print(f"⚠ Nessuna lettura disponibile per il ping {campo}")
     except Exception as e:
         print(f"❌ Errore ping t+{distanza_minuti} ({campo}):", str(e))
 
@@ -84,12 +86,15 @@ def glicemia():
     try:
         dexcom = Dexcom(USERNAME, PASSWORD, ous=True)
         reading = dexcom.get_current_glucose_reading()
+        if reading is None:
+            return jsonify({"errore": "Nessuna lettura disponibile da Dexcom"}), 404
         return jsonify({
             "glicemia": reading.value,
             "trend": reading.trend_description,
             "timestamp": reading.time.strftime("%Y-%m-%d %H:%M:%S")
         })
     except Exception as e:
+        print("❌ Errore nella glicemia:", str(e))
         return jsonify({"errore": str(e)}), 500
 
 @app.route("/jobs", methods=["GET"])
@@ -107,7 +112,5 @@ def lista_job_schedulati():
     except Exception as e:
         return jsonify({"errore": str(e)}), 500
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5001)
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5001)
