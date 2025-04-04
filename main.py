@@ -33,28 +33,30 @@ def aggiorna_valore_tempo(id_pasto, campo, valore):
         res = requests.patch(url, headers=headers, json=payload)
 
         if res.status_code in [200, 204]:
-            print(f"✅ {campo} aggiornato con successo.")
+            print(f"✅ {campo} aggiornato con valore {valore}")
         else:
             print(f"❌ Errore aggiornamento {campo}: {res.text}")
     except Exception as e:
-        print(f"❌ Errore durante la chiamata PATCH per {campo}:", str(e))
+        print(f"❌ Errore PATCH Supabase per {campo}:", str(e))
 
 def invia_ping(id_pasto, distanza_minuti, campo):
     try:
         print(f"⏱️ Esecuzione ping t+{distanza_minuti} min per {campo}")
         dexcom = Dexcom(USERNAME, PASSWORD, ous=True)
         reading = dexcom.get_current_glucose_reading()
+        print("📡 Risposta Dexcom:", reading)
 
         if reading is not None:
+            valore = reading.value
             try:
-                valore = float(reading.value)  # Assicura che sia un numero
+                valore = float(valore)
                 aggiorna_valore_tempo(id_pasto, campo, valore)
-            except ValueError:
-                print(f"❌ Valore non numerico per {campo}: {reading.value}")
+            except (ValueError, TypeError):
+                print(f"⚠ Valore non numerico o invalido per {campo}: {reading.value}")
         else:
-            print(f"⚠ Nessuna lettura disponibile per il ping {campo}")
+            print(f"⚠ Nessuna lettura disponibile da Dexcom per {campo}")
     except Exception as e:
-        print(f"❌ Errore ping t+{distanza_minuti} ({campo}):", str(e))
+        print(f"❌ Errore durante il ping t+{distanza_minuti} ({campo}):", str(e))
 
 @app.route("/pianifica-ping", methods=["POST"])
 def pianifica_ping():
@@ -82,6 +84,7 @@ def pianifica_ping():
                 replace_existing=True
             )
 
+        print(f"✅ Ping programmati per il pasto {id_pasto}")
         return jsonify({"messaggio": "✅ Ping programmati per t1, t2, t3"})
     except Exception as e:
         return jsonify({"errore": str(e)}), 500
