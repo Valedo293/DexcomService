@@ -130,8 +130,7 @@ def ottieni_glicemia():
         if reading:
             return jsonify({
                 "glicemia": float(reading.value),
-                "trend": reading.trend_description,
-                "timestamp": str(reading.display_time)
+                "trend": reading.trend_description
             })
         else:
             return jsonify({"errore": "Nessuna lettura disponibile"}), 404
