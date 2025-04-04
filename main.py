@@ -7,6 +7,7 @@ from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR
 import os
 import requests
 from datetime import datetime, timedelta
+import pytz  # Import per gestire i fusi orari
 
 # Carica variabili ambiente
 load_dotenv()
@@ -18,8 +19,8 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 app = Flask(__name__)
 CORS(app)
 
-# Configura lo scheduler per l'ora locale
-scheduler = BackgroundScheduler(timezone="Europe/Rome")  # Impostiamo il fuso orario italiano
+# Configura lo scheduler per il fuso orario locale
+scheduler = BackgroundScheduler(timezone="Europe/Rome")
 scheduler.start()
 
 # Headers per comunicare con Supabase
@@ -56,15 +57,10 @@ def invia_ping(id_pasto, distanza_minuti, campo):
             print(f"⚠ Nessuna lettura disponibile da Dexcom per {campo}")
             return
 
-        # Log aggiuntivi per monitorare la risposta
-        print(f"📡 Risposta Dexcom: glicemia={reading.value}, trend={reading.trend_description}, timestamp={reading.time}")
-
-        try:
-            valore = float(reading.value)  # Usa solo il valore numerico
-            print(f"📈 Aggiornamento glicemia: {valore}")
-            aggiorna_valore_tempo(id_pasto, campo, valore)
-        except Exception as e:
-            print(f"❌ Errore nella conversione del valore glicemia: {str(e)}")
+        # Estrarre solo il valore glicemia
+        valore = float(reading.value)  # Usa solo il valore numerico della glicemia
+        print(f"📈 Aggiornamento glicemia: {valore}")
+        aggiorna_valore_tempo(id_pasto, campo, valore)
         
     except requests.exceptions.RequestException as e:
         print(f"❌ Errore di rete durante il ping: {str(e)}")
@@ -90,7 +86,7 @@ def pianifica_ping():
             return jsonify({"errore": "ID del pasto mancante"}), 400
 
         print(f"📅 Pianificazione ping per il pasto {id_pasto}")
-        now = datetime.now()
+        now = datetime.now(pytz.timezone("Europe/Rome"))  # Orario locale Europe/Rome
         ping_schedule = [
             (10, "t1"),
             (20, "t2"),
@@ -98,7 +94,7 @@ def pianifica_ping():
         ]
 
         for minuti, campo in ping_schedule:
-            run_time = now + timedelta(minutes=minuti)
+            run_time = now + timedelta(minutes=minuti)  # Calcolo del run_time locale
             print(f"🕒 Scheduling ping per {campo} alle {run_time}")
 
             try:
