@@ -92,5 +92,18 @@ def glicemia():
     except Exception as e:
         return jsonify({"errore": str(e)}), 500
 
+@app.route("/jobs", methods=["GET"])
+def visualizza_jobs():
+    jobs = scheduler.get_jobs()
+    elenco = []
+    for job in jobs:
+        elenco.append({
+            "id": job.id,
+            "run_time": job.next_run_time.strftime("%Y-%m-%d %H:%M:%S") if job.next_run_time else "N/A",
+            "funzione": str(job.func),
+            "args": job.args,
+        })
+    return jsonify(elenco)
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5001)
