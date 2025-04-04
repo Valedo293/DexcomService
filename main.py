@@ -68,9 +68,9 @@ def pianifica_ping():
 
         now = datetime.now()
         ping_schedule = [
-            (60, "t1"),
-            (120, "t2"),
-            (180, "t3"),
+            (10, "t1"),
+            (20, "t2"),
+            (30, "t3"),
         ]
 
         for minuti, campo in ping_schedule:
