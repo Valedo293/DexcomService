@@ -4,10 +4,10 @@ from dotenv import load_dotenv
 from flask_cors import CORS
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.events import EVENT_JOB_EXECUTED, EVENT_JOB_ERROR
-from datetime import datetime, timedelta
-import pytz
 import os
 import requests
+from datetime import datetime, timedelta
+import pytz
 
 # Carica variabili ambiente
 load_dotenv()
@@ -19,135 +19,127 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 app = Flask(__name__)
 CORS(app)
 
-# Scheduler con fuso orario italiano
-scheduler = BackgroundScheduler(timezone="Europe/Rome")
-scheduler.start()
-
-# Header per Supabase
+# Headers per Supabase
 headers = {
     "apikey": SUPABASE_KEY,
     "Authorization": f"Bearer {SUPABASE_KEY}",
     "Content-Type": "application/json",
 }
 
-# Log dei job
+# Scheduler
+scheduler = BackgroundScheduler(timezone="Europe/Rome")
+scheduler.start()
+
+def aggiorna_valore_tempo(id_pasto, campo, valore):
+    try:
+        print(f"🚀 PATCH Supabase per {campo}, id_pasto={id_pasto}, valore={valore}")
+        url = f"{SUPABASE_URL}/rest/v1/analisi_dati?id=eq.{id_pasto}"
+        payload = {campo: valore}
+        res = requests.patch(url, headers=headers, json=payload)
+        print(f"🔄 Status: {res.status_code}, Response: {res.text}")
+    except Exception as e:
+        print(f"❌ PATCH error: {e}")
+
+def invia_ping(id_pasto, distanza_minuti, campo):
+    try:
+        print(f"⏱️ Ping eseguito per {campo}, id_pasto={id_pasto}")
+        dexcom = Dexcom(USERNAME, PASSWORD, ous=True)
+        reading = dexcom.get_current_glucose_reading()
+        if reading:
+            valore = float(reading.value)
+            print(f"📈 Glicemia letta: {valore}")
+            aggiorna_valore_tempo(id_pasto, campo, valore)
+        else:
+            print("⚠️ Nessuna lettura disponibile da Dexcom")
+    except Exception as e:
+        print(f"❌ Errore invio ping {campo}: {e}")
+
+# Event listener per vedere se il job è eseguito
 def job_listener(event):
     if event.exception:
         print(f"❌ Il job {event.job_id} ha fallito: {event.exception}")
     else:
-        print(f"✅ Il job {event.job_id} è stato eseguito correttamente!")
+        print(f"✅ Il job {event.job_id} è stato eseguito con successo!")
 
 scheduler.add_listener(job_listener, EVENT_JOB_EXECUTED | EVENT_JOB_ERROR)
 
-# PATCH a Supabase
-def aggiorna_valore_tempo(id_pasto, campo, valore):
-    try:
-        print(f"🚀 Aggiornamento valore per {campo}, id_pasto={id_pasto}, valore={valore}")
-        url = f"{SUPABASE_URL}/rest/v1/analisi_dati?id=eq.{id_pasto}"
-        payload = {campo: valore}
-        res = requests.patch(url, headers=headers, json=payload)
-        print(f"🔄 Risposta Supabase: {res.status_code} - {res.text}")
-        if res.status_code in [200, 204]:
-            print(f"✅ {campo} aggiornato con valore {valore}")
-        else:
-            print(f"❌ Errore aggiornamento {campo}: {res.text}")
-    except Exception as e:
-        print(f"❌ Errore PATCH Supabase per {campo}: {str(e)}")
-
-# Richiesta a Dexcom
-def invia_ping(id_pasto, distanza_minuti, campo):
-    print(f"🔍 Esecuzione invia_ping per {campo}, id_pasto={id_pasto}")
-    try:
-        dexcom = Dexcom(USERNAME, PASSWORD, ous=True)
-        reading = dexcom.get_current_glucose_reading()
-
-        if reading is None:
-            print(f"⚠ Nessuna lettura disponibile da Dexcom per {campo}")
-            return
-
-        valore = float(reading.value)
-        print(f"📈 Glicemia ricevuta: {valore}")
-        aggiorna_valore_tempo(id_pasto, campo, valore)
-
-    except requests.exceptions.RequestException as e:
-        print(f"❌ Errore di rete durante il ping: {str(e)}")
-    except Exception as e:
-        print(f"❌ Errore durante il ping t+{distanza_minuti} ({campo}): {str(e)}")
-
-# Pianificazione ping
+# Endpoint di pianificazione
 @app.route("/pianifica-ping", methods=["POST"])
 def pianifica_ping():
     try:
         dati = request.get_json()
         id_pasto = dati.get("id")
         if not id_pasto:
-            print("❌ ID del pasto mancante!")
             return jsonify({"errore": "ID del pasto mancante"}), 400
 
-        print(f"📅 Inizio pianificazione ping per pasto: {id_pasto}")
         now = datetime.now(pytz.timezone("Europe/Rome"))
+        intervalli = [(2, "t1"), (4, "t2"), (6, "t3")]
 
-        ping_schedule = [
-            (3, "t1"),
-            (6, "t2"),
-            (9, "t3"),
-        ]
-
-        for minuti, campo in ping_schedule:
+        for minuti, campo in intervalli:
             run_time = now + timedelta(minutes=minuti)
-            print(f"⏰ Scheduling job {campo} alle {run_time}")
-            try:
-                scheduler.add_job(
-                    invia_ping,
-                    "date",
-                    run_date=run_time,
-                    args=[id_pasto, minuti, campo],
-                    id=f"ping_{id_pasto}_{campo}",
-                    replace_existing=True
-                )
-                print(f"✅ Job {campo} schedulato per {run_time}")
-            except Exception as e:
-                print(f"❌ Errore nell’aggiungere il job per {campo}: {str(e)}")
+            print(f"⏰ Schedulo {campo} per le {run_time}")
+            scheduler.add_job(
+                invia_ping,
+                "date",
+                run_date=run_time,
+                args=[id_pasto, minuti, campo],
+                id=f"ping_{id_pasto}_{campo}",
+                replace_existing=True
+            )
 
-        return jsonify({"messaggio": "✅ Ping programmati per t1, t2, t3"})
+        return jsonify({"messaggio": "Ping schedulati con successo"})
     except Exception as e:
-        print(f"❌ Errore nella pianificazione dei job: {str(e)}")
+        print(f"❌ Errore in /pianifica-ping: {e}")
         return jsonify({"errore": str(e)}), 500
 
-# Endpoint glicemia singola
-@app.route("/glicemia", methods=["GET"])
-def glicemia():
-    try:
-        dexcom = Dexcom(USERNAME, PASSWORD, ous=True)
-        reading = dexcom.get_current_glucose_reading()
-        if reading is None:
-            return jsonify({"errore": "Nessuna lettura disponibile"}), 404
-        return jsonify({
-            "glicemia": reading.value,
-            "trend": reading.trend_description,
-            "timestamp": reading.time.strftime("%Y-%m-%d %H:%M:%S")
-        })
-    except Exception as e:
-        print(f"❌ Errore nella glicemia: {str(e)}")
-        return jsonify({"errore": str(e)}), 500
-
-# Endpoint lista job
+# Endpoint lista jobs
 @app.route("/jobs", methods=["GET"])
 def lista_job_schedulati():
     try:
         jobs = scheduler.get_jobs()
-        elenco = []
-        for job in jobs:
-            elenco.append({
-                "id": job.id,
-                "name": job.name,
-                "run_time": job.next_run_time.strftime("%Y-%m-%d %H:%M:%S") if job.next_run_time else None
-            })
+        elenco = [{
+            "id": job.id,
+            "name": job.name,
+            "run_time": job.next_run_time.strftime("%Y-%m-%d %H:%M:%S") if job.next_run_time else None
+        } for job in jobs]
         return jsonify(elenco)
     except Exception as e:
         return jsonify({"errore": str(e)}), 500
 
-# Avvio
-if __name__ == "__main__":
-    print("🚀 Server Flask avviato!")
-    app.run(host="0.0.0.0", port=5001)
+# Endpoint test diretto
+@app.route("/esegui-subito", methods=["POST"])
+def esegui_ping_subito():
+    try:
+        dati = request.get_json()
+        id_pasto = dati.get("id")
+        campo = dati.get("campo", "t1")
+        if not id_pasto:
+            return jsonify({"errore": "ID del pasto mancante"}), 400
+        dexcom = Dexcom(USERNAME, PASSWORD, ous=True)
+        reading = dexcom.get_current_glucose_reading()
+        if reading:
+            valore = float(reading.value)
+            aggiorna_valore_tempo(id_pasto, campo, valore)
+            return jsonify({"messaggio": f"✅ Ping eseguito per {campo}", "glicemia": valore})
+        else:
+            return jsonify({"errore": "Nessuna lettura disponibile da Dexcom"}), 404
+    except Exception as e:
+        return jsonify({"errore": str(e)}), 500
+
+# TEST JOB per Render
+def job_di_test():
+    print("✅ JOB DI TEST ESEGUITO (Render sta mantenendo attivo lo scheduler)")
+
+# Schedulo job di test tra 2 minuti dal boot
+scheduler.add_job(
+    job_di_test,
+    "date",
+    run_date=datetime.now(pytz.timezone("Europe/Rome")) + timedelta(minutes=2),
+    id="job_test_scheduler"
+)
+print("🧪 Job di test schedulato per 2 minuti dopo l’avvio")
+
+# RIMUOVI queste due righe se usi GUNICORN in produzione
+# if __name__ == "__main__":
+#     print("🚀 Avvio Flask in locale")
+#     app.run(host="0.0.0.0", port=5001)
