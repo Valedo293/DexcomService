@@ -93,9 +93,9 @@ def pianifica_ping():
         now = datetime.now(pytz.timezone("Europe/Rome"))
 
         ping_schedule = [
-            (10, "t1"),
-            (20, "t2"),
-            (30, "t3"),
+            (1, "t1"),
+            (3, "t2"),
+            (5, "t3"),
         ]
 
         for minuti, campo in ping_schedule:
