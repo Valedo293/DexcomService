@@ -28,6 +28,7 @@ headers = {
 
 def aggiorna_valore_tempo(id_pasto, campo, valore):
     try:
+        print(f"🚀 Aggiornamento valore per {campo}, id_pasto={id_pasto}, valore={valore}")
         url = f"{SUPABASE_URL}/rest/v1/analisi_dati?id=eq.{id_pasto}"
         payload = {campo: valore}
         res = requests.patch(url, headers=headers, json=payload)
@@ -37,26 +38,27 @@ def aggiorna_valore_tempo(id_pasto, campo, valore):
         else:
             print(f"❌ Errore aggiornamento {campo}: {res.text}")
     except Exception as e:
-        print(f"❌ Errore PATCH Supabase per {campo}:", str(e))
+        print(f"❌ Errore PATCH Supabase per {campo}: {str(e)}")
 
 def invia_ping(id_pasto, distanza_minuti, campo):
     try:
-        print(f"⏱️ Esecuzione ping t+{distanza_minuti} min per {campo}")
+        print(f"⏱️ Esecuzione ping t+{distanza_minuti} min per {campo}, id_pasto={id_pasto}")
         dexcom = Dexcom(USERNAME, PASSWORD, ous=True)
         reading = dexcom.get_current_glucose_reading()
-        print(f"📡 Risposta Dexcom: glicemia={reading.value}, trend={reading.trend_description}, timestamp={reading.time}")  # <--- AGGIUNTA
+        print(f"📡 Risposta Dexcom: glicemia={reading.value}, trend={reading.trend_description}, timestamp={reading.time}")  # Log dettagliato
 
         if reading is not None:
             valore = reading.value
             try:
                 valore = float(valore)
+                print(f"📈 Aggiornamento glicemia: {valore}")
                 aggiorna_valore_tempo(id_pasto, campo, valore)
             except (ValueError, TypeError):
                 print(f"⚠ Valore non numerico o invalido per {campo}: {reading.value}")
         else:
             print(f"⚠ Nessuna lettura disponibile da Dexcom per {campo}")
     except Exception as e:
-        print(f"❌ Errore durante il ping t+{distanza_minuti} ({campo}):", str(e))
+        print(f"❌ Errore durante il ping t+{distanza_minuti} ({campo}), id_pasto={id_pasto}: {str(e)}")
 
 @app.route("/pianifica-ping", methods=["POST"])
 def pianifica_ping():
@@ -66,6 +68,7 @@ def pianifica_ping():
         if not id_pasto:
             return jsonify({"errore": "ID del pasto mancante"}), 400
 
+        print(f"📅 Pianificazione ping per il pasto {id_pasto}")
         now = datetime.now()
         ping_schedule = [
             (10, "t1"),
@@ -75,6 +78,7 @@ def pianifica_ping():
 
         for minuti, campo in ping_schedule:
             run_time = now + timedelta(minutes=minuti)
+            print(f"🕒 Scheduling ping per {campo} alle {run_time}")
             scheduler.add_job(
                 invia_ping,
                 "date",
@@ -87,6 +91,7 @@ def pianifica_ping():
         print(f"✅ Ping programmati per il pasto {id_pasto}")
         return jsonify({"messaggio": "✅ Ping programmati per t1, t2, t3"})
     except Exception as e:
+        print(f"❌ Errore pianificazione ping per {id_pasto}: {str(e)}")
         return jsonify({"errore": str(e)}), 500
 
 @app.route("/glicemia", methods=["GET"])
@@ -94,6 +99,8 @@ def glicemia():
     try:
         dexcom = Dexcom(USERNAME, PASSWORD, ous=True)
         reading = dexcom.get_current_glucose_reading()
+        print(f"📡 Risposta glicemia: {reading.value}, trend={reading.trend_description}, timestamp={reading.time}")  # Log aggiuntivo
+
         if reading is None:
             return jsonify({"errore": "Nessuna lettura disponibile da Dexcom"}), 404
         return jsonify({
@@ -111,6 +118,7 @@ def lista_job_schedulati():
         jobs = scheduler.get_jobs()
         elenco = []
         for job in jobs:
+            print(f"🔄 Job schedulato: {job.id} alle {job.next_run_time}")  # Log dei job programmati
             elenco.append({
                 "id": job.id,
                 "name": job.name,
@@ -118,6 +126,7 @@ def lista_job_schedulati():
             })
         return jsonify(elenco)
     except Exception as e:
+        print(f"❌ Errore nel recupero dei job schedulati: {str(e)}")
         return jsonify({"errore": str(e)}), 500
 
 if __name__ == "__main__":
