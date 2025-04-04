@@ -44,7 +44,7 @@ def invia_ping(id_pasto, distanza_minuti, campo):
         print(f"⏱️ Esecuzione ping t+{distanza_minuti} min per {campo}")
         dexcom = Dexcom(USERNAME, PASSWORD, ous=True)
         reading = dexcom.get_current_glucose_reading()
-        print("📡 Risposta Dexcom:", reading)
+        print(f"📡 Risposta Dexcom: glicemia={reading.value}, trend={reading.trend_description}, timestamp={reading.time}")  # <--- AGGIUNTA
 
         if reading is not None:
             valore = reading.value
