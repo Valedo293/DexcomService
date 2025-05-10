@@ -30,7 +30,7 @@ headers = {
 
 # --- Connessione a MongoDB ---
 mongo_client = MongoClient(MONGO_URI)
-mongo_db = mongo_client.get_default_database()
+mongo_db = mongo_client["nightscout"]  # ← Qui la modifica
 entries_collection = mongo_db.entries  # Nightscout legge da qui
 
 def scrivi_glicemia_su_mongo(valore, timestamp, direction="Flat"):
