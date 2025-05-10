@@ -7,7 +7,7 @@ import requests
 from threading import Timer
 from datetime import datetime
 import json
-from pymongo import MongoClient  # <-- Aggiunta per MongoDB
+from pymongo import MongoClient
 
 # --- Carica variabili ambiente ---
 load_dotenv()
@@ -15,9 +15,7 @@ USERNAME = os.getenv("DEXCOM_USERNAME")
 PASSWORD = os.getenv("DEXCOM_PASSWORD")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-NIGHTSCOUT_URL = os.getenv("NIGHTSCOUT_URL")
-NIGHTSCOUT_API_SECRET = os.getenv("NIGHTSCOUT_API_SECRET")
-MONGO_URI = os.getenv("MONGO_URI")  # <-- URI Mongo aggiunto
+MONGO_URI = os.getenv("MONGO_URI")
 
 # --- Flask App ---
 app = Flask(__name__)
@@ -33,7 +31,7 @@ headers = {
 # --- Connessione a MongoDB ---
 mongo_client = MongoClient(MONGO_URI)
 mongo_db = mongo_client.get_default_database()
-entries_collection = mongo_db.entries  # Nightscout legge da questa collection
+entries_collection = mongo_db.entries  # Nightscout legge da qui
 
 def scrivi_glicemia_su_mongo(valore, timestamp, direction="Flat"):
     try:
@@ -100,8 +98,8 @@ def ottieni_glicemia():
     except Exception as e:
         return jsonify({"errore": str(e)}), 500
 
-# --- NIGHTSCOUT + MONGO: invio glicemia ogni 5 minuti ---
-def invia_a_nightscout():
+# --- Solo Mongo: invio glicemia ogni 5 minuti ---
+def invia_a_mongo():
     try:
         dexcom = Dexcom(USERNAME, PASSWORD, ous=True)
         reading = dexcom.get_current_glucose_reading()
@@ -113,32 +111,14 @@ def invia_a_nightscout():
         timestamp = reading.time
         trend = reading.trend_arrow or "Flat"
 
-        # Scrivi su Mongo
         scrivi_glicemia_su_mongo(valore, timestamp, trend)
 
-        # Invia anche a Nightscout
-        payload = [{
-            "type": "sgv",
-            "sgv": valore,
-            "dateString": timestamp.strftime("%Y-%m-%dT%H:%M:%S"),
-            "direction": trend,
-            "device": "dexcom-server"
-        }]
-
-        headers_nightscout = {
-            "API-SECRET": NIGHTSCOUT_API_SECRET,
-            "Content-Type": "application/json"
-        }
-
-        res = requests.post(f"{NIGHTSCOUT_URL}/api/v1/entries", headers=headers_nightscout, data=json.dumps(payload))
-        print(f"[NIGHTSCOUT] {timestamp} - {valore} mg/dL - Status: {res.status_code}")
     except Exception as e:
-        print(f"❌ Errore invio Nightscout: {e}")
+        print(f"❌ Errore lettura/scrittura Dexcom: {e}")
     finally:
-        # Ripeti ogni 5 minuti
-        Timer(300, invia_a_nightscout).start()
+        Timer(300, invia_a_mongo).start()
 
 # --- Avvio ---
 if __name__ == "__main__":
-    invia_a_nightscout()
+    invia_a_mongo()
     app.run(host="0.0.0.0", port=5001)
