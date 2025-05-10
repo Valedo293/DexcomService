@@ -19,7 +19,7 @@ MONGO_URI = os.getenv("MONGO_URI")
 
 # --- Flask App ---
 app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "*"}})  # <-- CORS aperto per evitare 403 da Vercel
+CORS(app, resources={r"/*": {"origins": "*"}})
 
 # --- Headers per Supabase ---
 headers = {
@@ -113,7 +113,7 @@ def glicemie_oggi():
         }).sort("date", 1))
 
         for r in risultati:
-            r["_id"] = str(r["_id"])  # Per rendere l'ID serializzabile
+            r["_id"] = str(r["_id"])
 
         return jsonify(risultati)
 
@@ -138,6 +138,14 @@ def invia_a_mongo():
         print(f"❌ Errore lettura/scrittura Dexcom: {e}")
     finally:
         Timer(300, invia_a_mongo).start()
+
+# --- Middleware per preflight CORS ---
+@app.after_request
+def after_request(response):
+    response.headers.add("Access-Control-Allow-Origin", "*")
+    response.headers.add("Access-Control-Allow-Headers", "Content-Type,Authorization")
+    response.headers.add("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
+    return response
 
 # --- Avvio ---
 invia_a_mongo()
