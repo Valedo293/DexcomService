@@ -77,12 +77,13 @@ def ottieni_glicemia():
     except Exception as e:
         return jsonify({"errore": str(e)}), 500
 
-# NIGHTSCOUT - invio ogni 5 minuti
+# --- NIGHTSCOUT: invio glicemia ogni 5 minuti ---
 def invia_a_nightscout():
     try:
         dexcom = Dexcom(USERNAME, PASSWORD, ous=True)
         reading = dexcom.get_current_glucose_reading()
         if not reading:
+            print("⚠️ Nessuna lettura disponibile da Dexcom")
             return
 
         valore = float(reading.value)
@@ -103,14 +104,14 @@ def invia_a_nightscout():
         }
 
         res = requests.post(f"{NIGHTSCOUT_URL}/api/v1/entries", headers=headers_nightscout, data=json.dumps(payload))
-        print(f"[NS] {timestamp_iso} - {valore} mg/dL - Status: {res.status_code}")
-
+        print(f"[NIGHTSCOUT] {timestamp_iso} - {valore} mg/dL - Status: {res.status_code}")
     except Exception as e:
-        print(f"Errore invio Nightscout: {e}")
+        print(f"❌ Errore invio Nightscout: {e}")
     finally:
-        Timer(300, invia_a_nightscout).start()  # Ripeti ogni 5 minuti
+        # Ripeti ogni 5 minuti
+        Timer(300, invia_a_nightscout).start()
 
-# Avvio server
+# --- Avvio ---
 if __name__ == "__main__":
     invia_a_nightscout()
     app.run(host="0.0.0.0", port=5001)
