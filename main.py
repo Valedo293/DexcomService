@@ -119,6 +119,5 @@ def invia_a_mongo():
         Timer(300, invia_a_mongo).start()
 
 # --- Avvio ---
-if __name__ == "__main__":
-    invia_a_mongo()
-    app.run(host="0.0.0.0", port=5001)
+invia_a_mongo()
+app.run(host="0.0.0.0", port=5001)
