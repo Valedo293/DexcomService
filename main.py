@@ -19,7 +19,7 @@ MONGO_URI = os.getenv("MONGO_URI")
 
 # --- Flask App ---
 app = Flask(__name__)
-CORS(app)
+CORS(app, resources={r"/*": {"origins": "*"}})  # <-- CORS aperto per evitare 403 da Vercel
 
 # --- Headers per Supabase ---
 headers = {
