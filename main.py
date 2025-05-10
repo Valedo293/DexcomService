@@ -30,8 +30,8 @@ headers = {
 
 # --- Connessione a MongoDB ---
 mongo_client = MongoClient(MONGO_URI)
-mongo_db = mongo_client["nightscout"]  # ← Qui la modifica
-entries_collection = mongo_db.entries  # Nightscout legge da qui
+mongo_db = mongo_client["nightscout"]
+entries_collection = mongo_db.entries
 
 def scrivi_glicemia_su_mongo(valore, timestamp, direction="Flat"):
     try:
@@ -98,7 +98,28 @@ def ottieni_glicemia():
     except Exception as e:
         return jsonify({"errore": str(e)}), 500
 
-# --- Solo Mongo: invio glicemia ogni 5 minuti ---
+@app.route("/glicemie-oggi", methods=["GET"])
+def glicemie_oggi():
+    try:
+        oggi = datetime.utcnow().date()
+        inizio = datetime.combine(oggi, datetime.min.time())
+        fine = datetime.combine(oggi, datetime.max.time())
+
+        risultati = list(entries_collection.find({
+            "date": {
+                "$gte": int(inizio.timestamp() * 1000),
+                "$lte": int(fine.timestamp() * 1000)
+            }
+        }).sort("date", 1))
+
+        for r in risultati:
+            r["_id"] = str(r["_id"])  # Per rendere l'ID serializzabile
+
+        return jsonify(risultati)
+
+    except Exception as e:
+        return jsonify({"errore": str(e)}), 500
+
 def invia_a_mongo():
     try:
         dexcom = Dexcom(USERNAME, PASSWORD, ous=True)
