@@ -101,9 +101,14 @@ def ottieni_glicemia():
 @app.route("/glicemie-oggi", methods=["GET"])
 def glicemie_oggi():
     try:
-        oggi = datetime.utcnow().date()
-        inizio = datetime.combine(oggi, datetime.min.time())
-        fine = datetime.combine(oggi, datetime.max.time())
+        data_param = request.args.get("data")  # es: ?data=2025-05-10
+        if data_param:
+            giorno = datetime.strptime(data_param, "%Y-%m-%d").date()
+        else:
+            giorno = datetime.utcnow().date()
+
+        inizio = datetime.combine(giorno, datetime.min.time())
+        fine = datetime.combine(giorno, datetime.max.time())
 
         risultati = list(entries_collection.find({
             "date": {
@@ -139,7 +144,6 @@ def invia_a_mongo():
     finally:
         Timer(300, invia_a_mongo).start()
 
-# --- Middleware per preflight CORS ---
 @app.after_request
 def after_request(response):
     response.headers.add("Access-Control-Allow-Origin", "*")
