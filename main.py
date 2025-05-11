@@ -8,6 +8,7 @@ from threading import Timer
 from datetime import datetime
 import json
 from pymongo import MongoClient
+from pytz import timezone, utc
 
 # --- Carica variabili ambiente ---
 load_dotenv()
@@ -101,19 +102,24 @@ def ottieni_glicemia():
 @app.route("/glicemie-oggi", methods=["GET"])
 def glicemie_oggi():
     try:
-        data_param = request.args.get("data")  # es: ?data=2025-05-10
+        fuso_italia = timezone("Europe/Rome")
+        data_param = request.args.get("data")
+
         if data_param:
             giorno = datetime.strptime(data_param, "%Y-%m-%d").date()
         else:
-            giorno = datetime.utcnow().date()
+            giorno = datetime.now(fuso_italia).date()
 
-        inizio = datetime.combine(giorno, datetime.min.time())
-        fine = datetime.combine(giorno, datetime.max.time())
+        inizio_italia = fuso_italia.localize(datetime.combine(giorno, datetime.min.time()))
+        fine_italia = fuso_italia.localize(datetime.combine(giorno, datetime.max.time()))
+
+        inizio_utc = inizio_italia.astimezone(utc)
+        fine_utc = fine_italia.astimezone(utc)
 
         risultati = list(entries_collection.find({
             "date": {
-                "$gte": int(inizio.timestamp() * 1000),
-                "$lte": int(fine.timestamp() * 1000)
+                "$gte": int(inizio_utc.timestamp() * 1000),
+                "$lte": int(fine_utc.timestamp() * 1000)
             }
         }).sort("date", 1))
 
