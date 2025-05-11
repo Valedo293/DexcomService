@@ -5,7 +5,7 @@ from flask_cors import CORS
 import os
 import requests
 from threading import Timer
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 from pymongo import MongoClient
 
@@ -108,8 +108,9 @@ def glicemie_oggi():
         else:
             giorno = datetime.utcnow().date()
 
-        inizio = datetime.combine(giorno, datetime.min.time())
-        fine = datetime.combine(giorno, datetime.max.time())
+        # Fuso orario italiano: tolgo 2 ore per includere anche 00:00–02:00 italiane
+        inizio = datetime.combine(giorno, datetime.min.time()) - timedelta(hours=2)
+        fine = datetime.combine(giorno, datetime.max.time()) - timedelta(hours=2)
 
         timestamp_inizio = int(inizio.timestamp() * 1000)
         timestamp_fine = int(fine.timestamp() * 1000)
