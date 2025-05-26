@@ -15,8 +15,8 @@ PASSWORD        = os.getenv("DEXCOM_PASSWORD")
 SUPABASE_URL    = os.getenv("SUPABASE_URL")
 SUPABASE_KEY    = os.getenv("SUPABASE_KEY")
 MONGO_URI       = os.getenv("MONGO_URI")
-ONESIGNAL_APPID = os.getenv("ONESIGNAL_APPID")
-ONESIGNAL_APIKEY = os.getenv("ONESIGNAL_APIKEY")
+TELEGRAM_TOKEN  = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 # --- Flask App ---
 app = Flask(__name__)
@@ -40,24 +40,18 @@ alert_attivo          = None
 intervallo_notifica   = None
 
 def send_push(titolo, messaggio):
+    # Notifica via Telegram
     try:
-        payload = {
-            "app_id": ONESIGNAL_APPID,
-            "included_segments": ["All"],
-            "headings": {"en": titolo},
-            "contents": {"en": messaggio}
-        }
-        res = requests.post(
-            "https://onesignal.com/api/v1/notifications",
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Basic {ONESIGNAL_APIKEY}"
-            },
-            json=payload
-        )
-        print(f"[PUSH] {titolo} | {messaggio} → {res.status_code}")
+        if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
+            url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+            payload = {
+                "chat_id": TELEGRAM_CHAT_ID,
+                "text": f"{titolo.upper()}\n{messaggio}"
+            }
+            res = requests.post(url, json=payload)
+            print(f"[PUSH] Telegram: {res.status_code}")
     except Exception as e:
-        print(f"❌ Errore invio notifica: {e}")
+        print(f"❌ Errore Telegram: {e}")
 
 def scrivi_glicemia_su_mongo(valore, timestamp, direction="Flat"):
     try:
