@@ -167,6 +167,3 @@ def ottieni_chat_id():
         print("Risposta Telegram:", data)
     except Exception as e:
         print(f"Errore recupero chat ID: {e}")
-
-if __name__ == "__main__":
-    print("Modulo pronto. Usa `valuta_glicemia(valore, trend, timestamp)` per test manuali.")
