@@ -104,10 +104,10 @@ def valuta_glicemia(valore, trend_raw, timestamp):
             "lenta_82"
         )
 
-    # 3. 3 valori consecutivi stabili ma in discesa (tra 86 e 80)
+    # 3. 3 valori consecutivi stabili ma in discesa (tra 86 e 79)
     if len(cronologia) >= 3:
         ultime = cronologia[-3:]
-        if all(x["trend"] == "→" for x in ultime) and ultime[0]["valore"] > ultime[1]["valore"] > ultime[2]["valore"] >= 80:
+        if all(x["trend"] == "→" for x in ultime) and ultime[0]["valore"] > ultime[1]["valore"] > ultime[2]["valore"] >= 79:
             return genera_alert(
                 "Glicemia al limite",
                 "Mangia un Tuc, un grissino o una caramella.",
