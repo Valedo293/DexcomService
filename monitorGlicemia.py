@@ -154,6 +154,17 @@ def valuta_glicemia(valore, trend_raw, timestamp):
             "scivolo_90"
         )
 
+    # 9. Nuova regola: due glicemie consecutive sotto 90 con trend ↘ (discesa lenta)
+    if len(cronologia) >= 2:
+        c1 = cronologia[-1]
+        c2 = cronologia[-2]
+        if c1["valore"] < 90 and c2["valore"] < 90 and c1["trend"] == "↘" and c2["trend"] == "↘":
+            return genera_alert(
+                "Discesa lenta confermata",
+                "Glicemia in calo costante. Correggi con mezzo succo",
+                "lenta_doppia_sotto90"
+            )
+
     return None
 
 def get_alert_attivo():
