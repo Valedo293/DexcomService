@@ -92,16 +92,16 @@ def valuta_glicemia(valore, trend_raw, timestamp):
     if valore < 75:
         return genera_alert(
             "Ipoglicemia",
-            "Correggi con: un succo, 3 bustine di zucchero o 3 caramelle zuccherate.",
+            "Correggi con: un succo, 3 bustine di zucchero o 3 caramelle zuccherate. Se IOB attivo anche uno snack",
             "ipo_grave"
         )
 
-    # 2. 82 in discesa lenta (↘ o ↓)
-    if valore == 82 and trend in ["↘", "↓"]:
+    # 2. 86 in discesa lenta (↘ o ↓)
+    if valore == 86 and trend in ["↘", "↓"]:
         return genera_alert(
             "Ipoglicemia in arrivo",
             "Correggi con mezzo succo.\nSe sei lontano dal pasto o hai insulina attiva, mangia anche uno snack: un Tuc, un grissino o una caramella zuccherata.",
-            "lenta_82"
+            "lenta_86"
         )
 
     # 3. 3 valori consecutivi stabili ma in discesa (tra 86 e 79)
@@ -122,15 +122,7 @@ def valuta_glicemia(valore, trend_raw, timestamp):
             "limite_78_stabile"
         )
 
-    # 5. 80 in discesa lenta
-    if valore == 80 and trend in ["↓", "↘"]:
-        return genera_alert(
-            "Ipoglicemia in arrivo",
-            "Correggi con mezzo succo.\nSe sei lontano dal pasto o hai insulina attiva, mangia anche uno snack: un Tuc, un grissino o una caramella zuccherata.",
-            "lenta_80"
-        )
-
-    # 6. Da 90 a 70 in discesa rapida o doppia
+    # 5. Da 90 a 70 in discesa rapida o doppia
     if 70 <= valore <= 90 and trend in ["↓", "↓↓"]:
         return genera_alert(
             "Discesa glicemica rapida",
@@ -138,31 +130,15 @@ def valuta_glicemia(valore, trend_raw, timestamp):
             f"rapida_{valore}"
         )
 
-    # 7. Discesa post pasto tra 80–85 con ↓↓
-    if 80 <= valore < 85 and trend == "↓↓":
-        return genera_alert(
-            "Discesa post pasto",
-            "Correggi con 10g di zuccheri semplici, poi rivaluta.",
-            "post_bolo_80_85"
-        )
-
-    # 8. Scivolamento da 90 con ↓↓ (conferma)
-    if 85 <= valore < 90 and trend == "↓↓" and len(cronologia) >= 2 and cronologia[-2]["valore"] >= 90:
-        return genera_alert(
-            "Scivolamento glicemico",
-            "Valutare snack se recente pasto o IOB. Glicemia in discesa da 90.",
-            "scivolo_90"
-        )
-
-    # 9. Nuova regola: due glicemie consecutive sotto 90 con trend ↘ (discesa lenta)
+    # 6. Due glicemie consecutive <90 con discesa lenta
     if len(cronologia) >= 2:
         c1 = cronologia[-1]
         c2 = cronologia[-2]
-        if c1["valore"] < 90 and c2["valore"] < 90 and c1["trend"] == "↘" and c2["trend"] == "↘":
+        if c1["valore"] < 90 and c2["valore"] < 90 and c1["trend"] in ["↘", "↓"] and c2["trend"] in ["↘", "↓"]:
             return genera_alert(
-                "Discesa lenta confermata",
-                "Glicemia in calo costante. Correggi con mezzo succo",
-                "lenta_doppia_sotto90"
+                "Discesa confermata",
+                "Glicemia in calo costante. Correggi con mezzo succo.",
+                "doppia_discesa_90"
             )
 
     return None
@@ -178,3 +154,6 @@ def ottieni_chat_id():
         print("Risposta Telegram:", data)
     except Exception as e:
         print(f"Errore recupero chat ID: {e}")
+
+if __name__ == "__main__":
+    print("Modulo monitorGlicemia attivo. Usa `valuta_glicemia(valore, trend, timestamp)` per test.")
