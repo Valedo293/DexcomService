@@ -7,6 +7,7 @@ import requests
 from threading import Timer
 from datetime import datetime, timedelta
 from pymongo import MongoClient
+import subprocess  # <-- import subprocess per avviare il monitor
 
 # --- Carica variabili ambiente ---
 load_dotenv()
@@ -112,5 +113,13 @@ def after_request(response):
     return response
 
 # --- Avvio ---
+
+# Avvia il monitor glicemia in parallelo
+try:
+    subprocess.Popen(["python3", "MonitorGlicemia.py"])
+    print("[STARTUP] MonitorGlicemia.py avviato correttamente.")
+except Exception as e:
+    print(f"[ERROR] Non sono riuscito ad avviare MonitorGlicemia.py: {e}")
+
 invia_a_mongo()
 app.run(host="0.0.0.0", port=5001)
