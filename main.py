@@ -70,7 +70,7 @@ def invia_a_mongo():
 
         print(f"[DEXCOM] Valore: {valore}, Trend: {trend}, Timestamp: {timestamp}")
         scrivi_glicemia_su_mongo(valore, timestamp, trend)
-        send_telegram_message("Nuovo valore glicemico", f"{valore} mg/dl - Trend: {trend}")
+        send_telegram_message("📈 Nuovo valore glicemico", f"{valore} mg/dl - Trend: {trend}")
 
     except Exception as e:
         print(f"[❌] Errore lettura Dexcom: {e}")
