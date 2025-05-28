@@ -5,8 +5,8 @@ from datetime import datetime
 from pymongo import MongoClient
 from dotenv import load_dotenv
 
+# Caricamento variabili ambiente
 load_dotenv()
-
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_IDS = os.getenv("TELEGRAM_CHAT_IDS", "").split(",")
 MONGO_URI = os.getenv("MONGO_URI")
@@ -20,15 +20,9 @@ intervallo_notifica = None
 
 def trend_to_arrow(trend_raw):
     mappa = {
-        "DoubleUp": "↑↑",
-        "SingleUp": "↑",
-        "FortyFiveUp": "↗",
-        "Flat": "→",
-        "FortyFiveDown": "↘",
-        "SingleDown": "↓",
-        "DoubleDown": "↓↓",
-        "NotComputable": "→",
-        "RateOutOfRange": "→"
+        "DoubleUp": "↑↑", "SingleUp": "↑", "FortyFiveUp": "↗",
+        "Flat": "→", "FortyFiveDown": "↘", "SingleDown": "↓",
+        "DoubleDown": "↓↓", "NotComputable": "→", "RateOutOfRange": "→"
     }
     return mappa.get(trend_raw, "→")
 
@@ -53,7 +47,6 @@ def genera_alert(titolo, messaggio, codice, ripetizioni=2):
     global alert_attivo, intervallo_notifica
     if alert_attivo and alert_attivo["codice"] == codice:
         return None
-
     alert_attivo = {"tipo": titolo, "azione": messaggio, "codice": codice, "ripetizioni": ripetizioni}
     invia_notifica(titolo, messaggio)
 
@@ -73,8 +66,6 @@ def genera_alert(titolo, messaggio, codice, ripetizioni=2):
     if ripetizioni > 0:
         start_periodica()
 
-    return alert_attivo
-
 def recupera_ultime_glicemie(n=3):
     try:
         docs = list(collezione.find().sort("date", -1).limit(n))
@@ -91,37 +82,31 @@ def recupera_ultime_glicemie(n=3):
 def valuta_glicemia_mongo():
     ultime = recupera_ultime_glicemie(3)
     if len(ultime) < 3:
-        print("[DEBUG] Meno di 3 valori disponibili, attendo...")
+        print("[DEBUG] Meno di 3 valori disponibili.")
         return
 
     print(f"[DEBUG] Ultime glicemie: {ultime}")
-
     c1, c2, c3 = ultime
 
-    # PROVA 1
-    if all(80 <= x["valore"] <= 140 and x["trend"] == "→" for x in ultime):
-        return genera_alert("TEST PROVA 1", "Tre valori stabili tra 80 e 140", "test_3_stabili")
+    if all(70 <= x["valore"] <= 140 and x["trend"] == "→" for x in [c2, c3]):
+        return genera_alert("ALLARME 1", "Due valori stabili consecutivi tra 70-140", "alert_1")
 
-    # PROVA 2
-    if all(80 <= x["valore"] <= 140 for x in [c1, c2, c3]) and c1["trend"] == "→" and c2["trend"] == "→" and c3["trend"] in ["↘", "↓"]:
-        return genera_alert("TEST PROVA 2", "Due stabili seguite da discesa", "test_2_stabili_discesa")
+    if (70 <= c2["valore"] <= 200 and c2["trend"] == "→" and
+        70 <= c3["valore"] <= 200 and c3["trend"] in ["↗", "↑", "↑↑"]):
+        return genera_alert("ALLARME 2", "Stabile seguito da salita tra 70-200", "alert_2")
 
-    # PROVA 3
-    if c3["valore"] == 80 and c3["trend"] in ["↗", "↑", "↑↑"]:
-        return genera_alert("TEST PROVA 3", "Valore 80 in salita", "test_140_up")
+    if 80 <= c3["valore"] <= 100 and c3["trend"] in ["↘", "↓", "↓↓"]:
+        return genera_alert("ALLARME 3", "Discesa ripida singola tra 80-100", "alert_3")
 
-    # PROVA 4
-    if 80 <= c3["valore"] <= 100:
-        return genera_alert("TEST PROVA 4", "Glicemia tra 80 e 100", "test_80_100")
+    if all(80 <= x["valore"] <= 160 and x["trend"] == "→" for x in [c1, c2, c3]) and c1["valore"] > c2["valore"] > c3["valore"]:
+        return genera_alert("ALLARME 4", "Tre valori stabili ma in discesa tra 80-160", "alert_4")
 
-    # PROVA 5
-    if 70 <= c3["valore"] <= 100 and c3["trend"] in ["↘", "↓", "↓↓"]:
-        return genera_alert("TEST PROVA 5", "Trend in discesa tra 70 e 100", "test_70_100_discesa")
+    print("[DEBUG] Nessuna condizione soddisfatta.")
+    reset_alert()
 
-    # PROVA 6 (nuova)
-    if c3["trend"] in ["↘", "↓", "↓↓"]:
-        return genera_alert("TEST PROVA 6", "Trend in discesa attiva", "test_discesa_generale")
+def ciclo_monitoraggio():
+    valuta_glicemia_mongo()
+    threading.Timer(300, ciclo_monitoraggio).start()
 
-    print("[DEBUG] Nessuna condizione soddisfatta")
-
-valuta_glicemia_mongo()
+# Avvio
+ciclo_monitoraggio()
