@@ -26,7 +26,9 @@ def trend_to_arrow(trend_raw):
         "NotComputable": "→",
         "RateOutOfRange": "→"
     }
-    return trend_map.get(trend_raw, "→")
+    arrow = trend_map.get(trend_raw, "→")
+    print(f"[DEBUG] trend_raw: {trend_raw} → trend_arrow: {arrow}")
+    return arrow
 
 def invia_notifica(titolo, messaggio):
     print(f"[DEBUG] Invio notifica Telegram: {titolo} - {messaggio}")
@@ -46,6 +48,7 @@ def invia_notifica(titolo, messaggio):
 
 def reset_alert():
     global alert_attivo, intervallo_notifica
+    print("[DEBUG] Eseguo reset_alert")
     if intervallo_notifica:
         intervallo_notifica.cancel()
     alert_attivo = None
@@ -84,6 +87,8 @@ def genera_alert(titolo, messaggio, codice, ripetizioni=2):
 
 def valuta_glicemia(valore, trend_raw, timestamp):
     global cronologia, alert_attivo
+    print(f"[DEBUG] Chiamata a valuta_glicemia con valore={valore}, trend_raw={trend_raw}, timestamp={timestamp}")
+
     trend = trend_to_arrow(trend_raw)
 
     cronologia.append({"valore": valore, "trend": trend, "timestamp": timestamp})
@@ -91,7 +96,7 @@ def valuta_glicemia(valore, trend_raw, timestamp):
         cronologia.pop(0)
 
     print(f"[DEBUG] Glicemia attuale: {valore} | Trend: {trend} | Timestamp: {timestamp}")
-    print(f"[DEBUG] Cronologia: {cronologia}")
+    print(f"[DEBUG] Cronologia ({len(cronologia)}): {cronologia}")
     print(f"[DEBUG] Alert attivo: {alert_attivo}")
 
     # RESET se glicemia torna stabile o in salita ≥ 78
@@ -99,35 +104,41 @@ def valuta_glicemia(valore, trend_raw, timestamp):
         print("[DEBUG] Glicemia risalita, reset alert.")
         reset_alert()
 
-    # PROVA 1 - 3 glicemie tra 140-100 stabili
+    # PROVA 1 - 3 glicemie tra 100 e 140 stabili
     if len(cronologia) >= 3:
         ultime = cronologia[-3:]
         if all(100 <= x["valore"] <= 140 and x["trend"] == "→" for x in ultime):
-            return genera_alert(
-                "TEST PROVA 1",
-                "Tre valori stabili tra 100 e 140",
-                "test_3_stabili"
-            )
+            return genera_alert("TEST PROVA 1", "Tre valori stabili tra 100 e 140", "test_3_stabili")
 
-    # PROVA 2 - due stabili tra 140-100 seguite da una discesa
+    # PROVA 2 - due stabili tra 100-140 seguite da una discesa
     if len(cronologia) >= 3:
         c1, c2, c3 = cronologia[-3:]
         if all(100 <= x["valore"] <= 140 for x in [c1, c2, c3]):
             if c1["trend"] == "→" and c2["trend"] == "→" and c3["trend"] in ["↘", "↓"]:
-                return genera_alert(
-                    "TEST PROVA 2",
-                    "Due glicemie stabili tra 140-100 seguite da discesa",
-                    "test_2_stabili_1_discesa"
-                )
+                return genera_alert("TEST PROVA 2", "Due stabili seguite da discesa tra 100-140", "test_2_stabili_1_discesa")
 
-    # PROVA 3 - 140 in salita
+    # PROVA 3 - Valore 140 in salita
     if valore == 140 and trend in ["↗", "↑", "↑↑"]:
-        return genera_alert(
-            "TEST PROVA 3",
-            "Valore 140 in salita → occhio alla glicemia",
-            "test_140_salita"
-        )
+        return genera_alert("TEST PROVA 3", "Valore 140 in salita → occhio alla glicemia", "test_140_salita")
 
+    # PROVA 4 - Qualsiasi valore stabile o in discesa tra 100 e 70
+    if 70 <= valore <= 100 and trend in ["→", "↘", "↓"]:
+        return genera_alert("TEST PROVA 4", "Valore tra 100 e 70 con trend stabile o in discesa", "test_tra_100_70")
+
+    # PROVA 5 - Tre glicemie in discesa tra 100 e 70
+    if len(cronologia) >= 3:
+        ultime = cronologia[-3:]
+        if all(70 <= x["valore"] <= 100 and x["trend"] in ["↘", "↓"] for x in ultime):
+            return genera_alert("TEST PROVA 5", "Tre valori in discesa tra 100 e 70", "test_3_discese_100_70")
+
+    # PROVA 6 - Una discesa + una stabile tra 100 e 70
+    if len(cronologia) >= 2:
+        c1, c2 = cronologia[-2:]
+        if all(70 <= x["valore"] <= 100 for x in [c1, c2]):
+            if (c1["trend"] in ["↘", "↓"] and c2["trend"] == "→") or (c1["trend"] == "→" and c2["trend"] in ["↘", "↓"]):
+                return genera_alert("TEST PROVA 6", "Una discesa + una stabile tra 100 e 70", "test_discesa_stabile_100_70")
+
+    print("[DEBUG] Nessuna condizione di alert soddisfatta.")
     return None
 
 def get_alert_attivo():
@@ -143,4 +154,4 @@ def ottieni_chat_id():
         print(f"[DEBUG] Errore recupero chat ID: {e}")
 
 if __name__ == "__main__":
-    print("Modulo monitorGlicemia TEST attivo. Usa `valuta_glicemia(valore, trend, timestamp)` per simulare.")
+    print("[DEBUG] Modulo monitorGlicemia ATTIVO. Usa `valuta_glicemia(valore, trend, timestamp)` per simulare.")
