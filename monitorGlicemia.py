@@ -10,7 +10,7 @@ load_dotenv()
 MONGO_URI = os.getenv("MONGO_URI")
 client = pymongo.MongoClient(MONGO_URI)
 db = client["nightscout"]
-collection = db.entries
+collection = db["entries"]
 
 TREND_MAP = {
     "Flat": "stabile",
