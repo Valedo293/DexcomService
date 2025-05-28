@@ -16,6 +16,8 @@ PASSWORD         = os.getenv("DEXCOM_PASSWORD")
 SUPABASE_URL     = os.getenv("SUPABASE_URL")
 SUPABASE_KEY     = os.getenv("SUPABASE_KEY")
 MONGO_URI        = os.getenv("MONGO_URI")
+TELEGRAM_TOKEN   = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 # --- Flask App ---
 app = Flask(__name__)
@@ -29,10 +31,25 @@ headers = {
 }
 
 # --- Connessione a MongoDB ---
-mongo_client = MongoClient(MONGO_URI)
-mongo_db = mongo_client["nightscout"]
+mongo_client       = MongoClient(MONGO_URI)
+mongo_db           = mongo_client["nightscout"]
 entries_collection = mongo_db.entries
 
+# --- Telegram ---
+def send_push(titolo, messaggio):
+    try:
+        if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
+            url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+            payload = {
+                "chat_id": TELEGRAM_CHAT_ID,
+                "text": f"{titolo.upper()}\n{messaggio}"
+            }
+            res = requests.post(url, json=payload)
+            print(f"[PUSH] Telegram: {res.status_code}")
+    except Exception as e:
+        print(f"❌ Errore Telegram: {e}")
+
+# --- Scrittura Mongo ---
 def scrivi_glicemia_su_mongo(valore, timestamp, direction="Flat"):
     try:
         entry = {
@@ -48,10 +65,11 @@ def scrivi_glicemia_su_mongo(valore, timestamp, direction="Flat"):
     except Exception as e:
         print(f"❌ Errore scrittura Mongo: {e}")
 
+# --- Endpoint API ---
 @app.route("/glicemia", methods=["GET"])
 def ottieni_glicemia():
     try:
-        dexcom = Dexcom(USERNAME, PASSWORD, ous=True)
+        dexcom  = Dexcom(USERNAME, PASSWORD, ous=True)
         reading = dexcom.get_current_glucose_reading()
         if reading:
             return jsonify({
@@ -68,7 +86,6 @@ def glicemie_oggi():
     try:
         data_param = request.args.get("data")
         giorno = datetime.strptime(data_param, "%Y-%m-%d").date() if data_param else datetime.utcnow().date()
-
         inizio = datetime.combine(giorno, datetime.min.time()) - timedelta(hours=2)
         fine   = datetime.combine(giorno, datetime.max.time()) - timedelta(hours=2)
         ts_in  = int(inizio.timestamp() * 1000)
@@ -82,24 +99,59 @@ def glicemie_oggi():
             r["_id"] = str(r["_id"])
 
         return jsonify(risultati), 200
-
     except Exception as e:
         return jsonify({"errore": str(e)}), 500
 
+# --- Supabase: aggiornamento valori ---
+def aggiorna_valore_tempo(id_pasto, campo, valore):
+    try:
+        url     = f"{SUPABASE_URL}/rest/v1/analisi_dati?id=eq.{id_pasto}"
+        payload = {campo: valore}
+        res     = requests.patch(url, headers=headers, json=payload)
+        print(f"[SUPABASE] {campo}: {valore} -> {res.status_code}")
+    except Exception as e:
+        print(f"Errore PATCH Supabase: {e}")
+
+def invia_ping(id_pasto, campo):
+    try:
+        dexcom  = Dexcom(USERNAME, PASSWORD, ous=True)
+        reading = dexcom.get_current_glucose_reading()
+        if reading:
+            valore = float(reading.value)
+            aggiorna_valore_tempo(id_pasto, campo, valore)
+    except Exception as e:
+        print(f"Errore ping {campo}: {e}")
+
+@app.route("/pianifica-ping", methods=["POST"])
+def pianifica_ping():
+    try:
+        dati     = request.get_json()
+        id_pasto = dati.get("id")
+        if not id_pasto:
+            return jsonify({"errore": "ID del pasto mancante"}), 400
+
+        Timer(60 * 60,  invia_ping, args=[id_pasto, "t1"]).start()
+        Timer(90 * 60,  invia_ping, args=[id_pasto, "t2"]).start()
+        Timer(180 * 60, invia_ping, args=[id_pasto, "t3"]).start()
+
+        return jsonify({"messaggio": "Ping pianificati"}), 200
+    except Exception as e:
+        return jsonify({"errore": str(e)}), 500
+
+# --- Lettura Dexcom periodica e scrittura Mongo ---
 def invia_a_mongo():
     try:
-        dexcom = Dexcom(USERNAME, PASSWORD, ous=True)
+        dexcom  = Dexcom(USERNAME, PASSWORD, ous=True)
         reading = dexcom.get_current_glucose_reading()
         if not reading:
             print("⚠️ Nessuna lettura disponibile da Dexcom")
             return
 
-        valore = float(reading.value)
+        valore    = float(reading.value)
         timestamp = reading.time
-        trend = reading.trend_arrow or "Flat"
+        trend     = reading.trend_arrow or "Flat"
 
         scrivi_glicemia_su_mongo(valore, timestamp, trend)
-
     except Exception as e:
         print(f"❌ Errore lettura/scrittura Dexcom: {e}")
     finally:
@@ -113,15 +165,13 @@ def after_request(response):
     return response
 
 # --- Avvio ---
-print("🚀 Avvio DexcomService e monitoraggio glicemia...")
+if __name__ == "__main__":
+    print("🚀 Avvio DexcomService")
+    try:
+        subprocess.Popen(["python", "MonitorGlicemia.py"])
+        print("✅ MonitorGlicemia avviato correttamente")
+    except Exception as e:
+        print(f"❌ Errore avvio MonitorGlicemia: {e}")
 
-# 🔁 Avvia MonitorGlicemia e logga su file
-try:
-    with open("monitor.log", "a") as log_file:
-        subprocess.Popen(["python3", "MonitorGlicemia.py"], stdout=log_file, stderr=log_file)
-    print("✅ MonitorGlicemia avviato correttamente")
-except Exception as e:
-    print(f"❌ Errore avvio MonitorGlicemia: {e}")
-
-invia_a_mongo()
-app.run(host="0.0.0.0", port=5001)
+    invia_a_mongo()
+    app.run(host="0.0.0.0", port=5001)
