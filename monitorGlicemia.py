@@ -1,112 +1,93 @@
-import os
-import threading
-import requests
+import pymongo
+import time
 from datetime import datetime
-from pymongo import MongoClient
-from dotenv import load_dotenv
+from collections import deque
 
-# Caricamento variabili ambiente
-load_dotenv()
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_IDS = os.getenv("TELEGRAM_CHAT_IDS", "").split(",")
-MONGO_URI = os.getenv("MONGO_URI")
+# Connessione al database MongoDB
+client = pymongo.MongoClient("mongodb://localhost:27017/")
+db = client["glicemia"]
+collection = db["valori"]
 
-client = MongoClient(MONGO_URI)
-db = client["nightscout"]
-collezione = db.entries
+# Tracciamento dell'ultimo valore letto
+ultimo_id = None
 
-alert_attivo = None
-intervallo_notifica = None
+# Coda per memorizzare gli ultimi valori
+storico = deque(maxlen=5)
 
-def trend_to_arrow(trend_raw):
-    mappa = {
-        "DoubleUp": "↑↑", "SingleUp": "↑", "FortyFiveUp": "↗",
-        "Flat": "→", "FortyFiveDown": "↘", "SingleDown": "↓",
-        "DoubleDown": "↓↓", "NotComputable": "→", "RateOutOfRange": "→"
-    }
-    return mappa.get(trend_raw, "→")
+# Stato degli allarmi per evitare notifiche ripetute
+allarmi_attivi = {
+    "2_stabili": False,
+    "stabile_salita": False,
+    "discesa_ripida": False,
+    "3_stabili_discesa": False
+}
 
-def invia_notifica(titolo, messaggio):
-    for chat_id in TELEGRAM_CHAT_IDS:
-        if chat_id.strip():
-            try:
-                url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-                payload = {"chat_id": chat_id.strip(), "text": f"{titolo.upper()}\n{messaggio}"}
-                requests.post(url, json=payload)
-            except Exception as e:
-                print(f"[Telegram] Errore: {e}")
+def reset_allarmi():
+    for k in allarmi_attivi:
+        allarmi_attivi[k] = False
 
-def reset_alert():
-    global alert_attivo, intervallo_notifica
-    if intervallo_notifica:
-        intervallo_notifica.cancel()
-    alert_attivo = None
-    intervallo_notifica = None
-
-def genera_alert(titolo, messaggio, codice, ripetizioni=2):
-    global alert_attivo, intervallo_notifica
-    if alert_attivo and alert_attivo["codice"] == codice:
-        return None
-    alert_attivo = {"tipo": titolo, "azione": messaggio, "codice": codice, "ripetizioni": ripetizioni}
-    invia_notifica(titolo, messaggio)
-
-    def notifica_periodica():
-        if alert_attivo and alert_attivo["ripetizioni"] > 0:
-            invia_notifica(titolo, messaggio)
-            alert_attivo["ripetizioni"] -= 1
-            start_periodica()
-        else:
-            reset_alert()
-
-    def start_periodica():
-        global intervallo_notifica
-        intervallo_notifica = threading.Timer(120, notifica_periodica)
-        intervallo_notifica.start()
-
-    if ripetizioni > 0:
-        start_periodica()
-
-def recupera_ultime_glicemie(n=3):
-    try:
-        docs = list(collezione.find().sort("date", -1).limit(n))
-        docs_ordinati = sorted(docs, key=lambda x: x["date"])
-        return [{
-            "valore": x["sgv"],
-            "trend": trend_to_arrow(x.get("direction", "Flat")),
-            "timestamp": datetime.fromtimestamp(x["date"] / 1000)
-        } for x in docs_ordinati]
-    except Exception as e:
-        print(f"[MongoDB] Errore lettura: {e}")
-        return []
-
-def valuta_glicemia_mongo():
-    ultime = recupera_ultime_glicemie(3)
-    if len(ultime) < 3:
-        print("[DEBUG] Meno di 3 valori disponibili.")
+def valuta_eventi(storico):
+    if len(storico) < 3:
         return
 
-    print(f"[DEBUG] Ultime glicemie: {ultime}")
-    c1, c2, c3 = ultime
+    valori = [s["valore"] for s in storico]
+    trend = [s["trend"] for s in storico]
+    now = datetime.now().strftime("%H:%M:%S")
 
-    if all(70 <= x["valore"] <= 140 and x["trend"] == "→" for x in [c2, c3]):
-        return genera_alert("ALLARME 1", "Due valori stabili consecutivi tra 70-140", "alert_1")
+    # 1. Due valori stabili consecutivi tra 70 e 140
+    if not allarmi_attivi["2_stabili"]:
+        if (storico[-1]["trend"] == "stabile" and storico[-2]["trend"] == "stabile" and
+            70 <= valori[-1] <= 140 and 70 <= valori[-2] <= 140):
+            print(f"⚠️ [ALLARME 1 - {now}] Due valori stabili consecutivi tra 70 e 140")
+            allarmi_attivi["2_stabili"] = True
 
-    if (70 <= c2["valore"] <= 200 and c2["trend"] == "→" and
-        70 <= c3["valore"] <= 200 and c3["trend"] in ["↗", "↑", "↑↑"]):
-        return genera_alert("ALLARME 2", "Stabile seguito da salita tra 70-200", "alert_2")
+    # 2. Un valore stabile e uno in salita tra 70 e 200
+    if not allarmi_attivi["stabile_salita"]:
+        if (storico[-2]["trend"] == "stabile" and storico[-1]["trend"] == "salita" and
+            70 <= valori[-2] <= 200 and 70 <= valori[-1] <= 200):
+            print(f"⚠️ [ALLARME 2 - {now}] Un valore stabile e uno in salita tra 70 e 200")
+            allarmi_attivi["stabile_salita"] = True
 
-    if 80 <= c3["valore"] <= 100 and c3["trend"] in ["↘", "↓", "↓↓"]:
-        return genera_alert("ALLARME 3", "Discesa ripida singola tra 80-100", "alert_3")
+    # 3. Un solo valore con discesa ripida tra 100 e 80
+    if not allarmi_attivi["discesa_ripida"]:
+        if (storico[-1]["trend"] == "discesa" and 80 <= valori[-1] <= 100):
+            print(f"⚠️ [ALLARME 3 - {now}] Discesa ripida tra 100 e 80")
+            allarmi_attivi["discesa_ripida"] = True
 
-    if all(80 <= x["valore"] <= 160 and x["trend"] == "→" for x in [c1, c2, c3]) and c1["valore"] > c2["valore"] > c3["valore"]:
-        return genera_alert("ALLARME 4", "Tre valori stabili ma in discesa tra 80-160", "alert_4")
+    # 4. Tre valori stabili in discesa tra 80 e 160
+    if not allarmi_attivi["3_stabili_discesa"]:
+        if (len(storico) >= 3 and all(s["trend"] == "stabile" for s in storico[-3:]) and
+            80 <= valori[-1] <= 160 and
+            valori[-3] > valori[-2] > valori[-1]):
+            print(f"⚠️ [ALLARME 4 - {now}] Tre valori stabili in discesa tra 80 e 160")
+            allarmi_attivi["3_stabili_discesa"] = True
 
-    print("[DEBUG] Nessuna condizione soddisfatta.")
-    reset_alert()
+def analizza_valore(valore):
+    print(f"🩸 Nuovo valore: {valore['valore']} mg/dl | Trend: {valore['trend']} | {valore['timestamp']}")
+    storico.append(valore)
+    valuta_eventi(storico)
 
-def ciclo_monitoraggio():
-    valuta_glicemia_mongo()
-    threading.Timer(300, ciclo_monitoraggio).start()
+# Ciclo principale
+while True:
+    try:
+        ultimo_valore = collection.find_one(sort=[("_id", pymongo.DESCENDING)])
 
-# Avvio
-ciclo_monitoraggio()
+        if ultimo_valore and ultimo_valore["_id"] != ultimo_id:
+            ultimo_id = ultimo_valore["_id"]
+            analizza_valore(ultimo_valore)
+        else:
+            print("⏳ Nessun nuovo valore.")
+
+        time.sleep(30)  # attesa prima di rileggere
+
+        # Reset degli allarmi se la glicemia esce dai range
+        if storico and not any([
+            70 <= storico[-1]["valore"] <= 140,
+            80 <= storico[-1]["valore"] <= 160,
+            100 >= storico[-1]["valore"] >= 80
+        ]):
+            reset_allarmi()
+
+    except Exception as e:
+        print(f"❌ Errore: {e}")
+        time.sleep(30)
