@@ -1,30 +1,30 @@
 import os
-import time
 import threading
 import requests
 from datetime import datetime
+from pymongo import MongoClient
 from dotenv import load_dotenv
 
 load_dotenv()
 
+# Configurazione
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_IDS = os.getenv("TELEGRAM_CHAT_IDS", "").split(",")
+MONGO_URI = os.getenv("MONGODB_URI")
 
-cronologia = []
+# Connessione a MongoDB
+client = MongoClient(MONGO_URI)
+db = client.get_database()
+collezione_glicemie = db.get_collection("glicemie")
+
 alert_attivo = None
 intervallo_notifica = None
 
 def trend_to_arrow(trend_raw):
     trend_map = {
-        "DoubleUp": "↑↑",
-        "SingleUp": "↑",
-        "FortyFiveUp": "↗",
-        "Flat": "→",
-        "FortyFiveDown": "↘",
-        "SingleDown": "↓",
-        "DoubleDown": "↓↓",
-        "NotComputable": "→",
-        "RateOutOfRange": "→"
+        "DoubleUp": "↑↑", "SingleUp": "↑", "FortyFiveUp": "↗",
+        "Flat": "→", "FortyFiveDown": "↘", "SingleDown": "↓",
+        "DoubleDown": "↓↓", "NotComputable": "→", "RateOutOfRange": "→"
     }
     arrow = trend_map.get(trend_raw, "→")
     print(f"[DEBUG] trend_raw: {trend_raw} → trend_arrow: {arrow}")
@@ -32,7 +32,6 @@ def trend_to_arrow(trend_raw):
 
 def invia_notifica(titolo, messaggio):
     print(f"[DEBUG] Invio notifica Telegram: {titolo} - {messaggio}")
-    print(f"[DEBUG] TOKEN: {TELEGRAM_TOKEN}")
     for chat_id in TELEGRAM_CHAT_IDS:
         chat_id = chat_id.strip()
         if not chat_id:
@@ -57,11 +56,9 @@ def reset_alert():
 
 def genera_alert(titolo, messaggio, codice, ripetizioni=2):
     global alert_attivo, intervallo_notifica
-
     if alert_attivo and alert_attivo["codice"] == codice:
         print(f"[DEBUG] Alert {codice} già attivo, non invio doppio.")
         return None
-
     print(f"[DEBUG] Genera alert: {titolo} | {messaggio} | codice: {codice}")
     alert_attivo = {"tipo": titolo, "azione": messaggio, "codice": codice, "ripetizioni": ripetizioni}
     invia_notifica(titolo, messaggio)
@@ -85,58 +82,60 @@ def genera_alert(titolo, messaggio, codice, ripetizioni=2):
 
     return alert_attivo
 
+def recupera_ultime_glicemie(n=3):
+    try:
+        print(f"[DEBUG] Recupero ultime {n} glicemie da Mongo...")
+        dati = list(collezione_glicemie.find().sort("timestamp", -1).limit(n))
+        dati_ordinati = sorted(dati, key=lambda x: x["timestamp"])
+        for g in dati_ordinati:
+            print(f"[DEBUG] Da Mongo: {g['valore']} mg/dL, trend: {g['trend']}, ts: {g['timestamp']}")
+        return dati_ordinati
+    except Exception as e:
+        print(f"[ERRORE] Recupero glicemie da Mongo fallito: {e}")
+        return []
+
 def valuta_glicemia(valore, trend_raw, timestamp):
-    global cronologia, alert_attivo
-    print(f"[DEBUG] Chiamata a valuta_glicemia con valore={valore}, trend_raw={trend_raw}, timestamp={timestamp}")
+    global alert_attivo
+    print(f"[DEBUG] ➤ Chiamata valuta_glicemia con valore={valore}, trend_raw={trend_raw}, timestamp={timestamp}")
 
     trend = trend_to_arrow(trend_raw)
-
-    cronologia.append({"valore": valore, "trend": trend, "timestamp": timestamp})
-    if len(cronologia) > 10:
-        cronologia.pop(0)
-
-    print(f"[DEBUG] Glicemia attuale: {valore} | Trend: {trend} | Timestamp: {timestamp}")
-    print(f"[DEBUG] Cronologia ({len(cronologia)}): {cronologia}")
-    print(f"[DEBUG] Alert attivo: {alert_attivo}")
 
     # RESET se glicemia torna stabile o in salita ≥ 78
     if alert_attivo and valore >= 78 and trend in ["→", "↑", "↗", "↑↑"]:
         print("[DEBUG] Glicemia risalita, reset alert.")
         reset_alert()
 
-    # PROVA 1 - 3 glicemie tra 100 e 140 stabili
-    if len(cronologia) >= 3:
-        ultime = cronologia[-3:]
-        if all(100 <= x["valore"] <= 140 and x["trend"] == "→" for x in ultime):
-            return genera_alert("TEST PROVA 1", "Tre valori stabili tra 100 e 140", "test_3_stabili")
+    ultime = recupera_ultime_glicemie(3)
+    if len(ultime) < 3:
+        print("[DEBUG] Meno di 3 valori in Mongo. Nessuna valutazione.")
+        return None
 
-    # PROVA 2 - due stabili tra 100-140 seguite da una discesa
-    if len(cronologia) >= 3:
-        c1, c2, c3 = cronologia[-3:]
-        if all(100 <= x["valore"] <= 140 for x in [c1, c2, c3]):
-            if c1["trend"] == "→" and c2["trend"] == "→" and c3["trend"] in ["↘", "↓"]:
-                return genera_alert("TEST PROVA 2", "Due stabili seguite da discesa tra 100-140", "test_2_stabili_1_discesa")
+    # PROVA 1
+    if all(100 <= x["valore"] <= 140 and x["trend"] == "→" for x in ultime):
+        return genera_alert("TEST PROVA 1", "Tre valori stabili tra 100 e 140", "test_3_stabili")
 
-    # PROVA 3 - Valore 140 in salita
+    # PROVA 2
+    if all(100 <= x["valore"] <= 140 for x in ultime):
+        if ultime[0]["trend"] == "→" and ultime[1]["trend"] == "→" and ultime[2]["trend"] in ["↘", "↓"]:
+            return genera_alert("TEST PROVA 2", "Due stabili seguite da discesa tra 100-140", "test_2_stabili_1_discesa")
+
+    # PROVA 3
     if valore == 140 and trend in ["↗", "↑", "↑↑"]:
         return genera_alert("TEST PROVA 3", "Valore 140 in salita → occhio alla glicemia", "test_140_salita")
 
-    # PROVA 4 - Qualsiasi valore stabile o in discesa tra 100 e 70
+    # PROVA 4
     if 70 <= valore <= 100 and trend in ["→", "↘", "↓"]:
         return genera_alert("TEST PROVA 4", "Valore tra 100 e 70 con trend stabile o in discesa", "test_tra_100_70")
 
-    # PROVA 5 - Tre glicemie in discesa tra 100 e 70
-    if len(cronologia) >= 3:
-        ultime = cronologia[-3:]
-        if all(70 <= x["valore"] <= 100 and x["trend"] in ["↘", "↓"] for x in ultime):
-            return genera_alert("TEST PROVA 5", "Tre valori in discesa tra 100 e 70", "test_3_discese_100_70")
+    # PROVA 5
+    if all(70 <= x["valore"] <= 100 and x["trend"] in ["↘", "↓"] for x in ultime):
+        return genera_alert("TEST PROVA 5", "Tre valori in discesa tra 100 e 70", "test_3_discese_100_70")
 
-    # PROVA 6 - Una discesa + una stabile tra 100 e 70
-    if len(cronologia) >= 2:
-        c1, c2 = cronologia[-2:]
-        if all(70 <= x["valore"] <= 100 for x in [c1, c2]):
-            if (c1["trend"] in ["↘", "↓"] and c2["trend"] == "→") or (c1["trend"] == "→" and c2["trend"] in ["↘", "↓"]):
-                return genera_alert("TEST PROVA 6", "Una discesa + una stabile tra 100 e 70", "test_discesa_stabile_100_70")
+    # PROVA 6
+    if all(70 <= x["valore"] <= 100 for x in ultime[-2:]):
+        c1, c2 = ultime[-2:]
+        if (c1["trend"] in ["↘", "↓"] and c2["trend"] == "→") or (c1["trend"] == "→" and c2["trend"] in ["↘", "↓"]):
+            return genera_alert("TEST PROVA 6", "Una discesa + una stabile tra 100 e 70", "test_discesa_stabile_100_70")
 
     print("[DEBUG] Nessuna condizione di alert soddisfatta.")
     return None
@@ -154,4 +153,5 @@ def ottieni_chat_id():
         print(f"[DEBUG] Errore recupero chat ID: {e}")
 
 if __name__ == "__main__":
-    print("[DEBUG] Modulo monitorGlicemia ATTIVO. Usa `valuta_glicemia(valore, trend, timestamp)` per simulare.")
+    print("[DEBUG] Modulo monitorGlicemia con Mongo ATTIVO.")
+    print("Usa `valuta_glicemia(valore, trend_raw, timestamp)` per testarlo.")
