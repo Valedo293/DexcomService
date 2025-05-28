@@ -99,8 +99,8 @@ def valuta_glicemia_mongo():
     c1, c2, c3 = ultime
 
     # PROVA 1
-    if all(100 <= x["valore"] <= 140 and x["trend"] == "→" for x in ultime):
-        return genera_alert("TEST PROVA 1", "Tre valori stabili tra 100 e 140", "test_3_stabili")
+    if all(80 <= x["valore"] <= 140 and x["trend"] == "→" for x in ultime):
+        return genera_alert("TEST PROVA 1", "Tre valori stabili tra 80 e 140", "test_3_stabili")
 
     # PROVA 2
     if all(80 <= x["valore"] <= 140 for x in [c1, c2, c3]) and c1["trend"] == "→" and c2["trend"] == "→" and c3["trend"] in ["↘", "↓"]:
