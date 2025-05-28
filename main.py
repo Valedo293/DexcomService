@@ -8,7 +8,7 @@ from threading import Timer
 from datetime import datetime, timedelta
 from pymongo import MongoClient
 
-# Carica variabili ambiente
+# --- Carica variabili ambiente ---
 load_dotenv()
 USERNAME        = os.getenv("DEXCOM_USERNAME")
 PASSWORD        = os.getenv("DEXCOM_PASSWORD")
@@ -16,88 +16,91 @@ MONGO_URI       = os.getenv("MONGO_URI")
 TELEGRAM_TOKEN  = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# Flask App
+# --- Flask App ---
 app = Flask(__name__)
 CORS(app)
 
-# Connessione a MongoDB
+# --- Connessione a MongoDB ---
 mongo_client       = MongoClient(MONGO_URI)
 mongo_db           = mongo_client["nightscout"]
 entries_collection = mongo_db.entries
 
-# Logica Alert
-alert_attivo = None
-cronologia = []
-
-def trend_to_arrow(trend_raw):
-    trend_map = {
-        "DoubleUp": "↑↑", "SingleUp": "↑", "FortyFiveUp": "↗",
-        "Flat": "→", "FortyFiveDown": "↘", "SingleDown": "↓", "DoubleDown": "↓↓"
-    }
-    return trend_map.get(trend_raw, "→")
-
-def invia_notifica(titolo, messaggio):
+# --- Telegram ---
+def send_telegram(title, message):
     try:
         if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
             url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-            payload = {"chat_id": TELEGRAM_CHAT_ID, "text": f"{titolo.upper()}\n{messaggio}"}
-            res = requests.post(url, json=payload)
-            print(f"[TELEGRAM] {res.status_code} - {titolo}")
+            payload = {"chat_id": TELEGRAM_CHAT_ID, "text": f"{title.upper()}\n{message}"}
+            r = requests.post(url, json=payload)
+            print(f"[Telegram] Status: {r.status_code}")
     except Exception as e:
-        print(f"Errore Telegram: {e}")
+        print(f"[Telegram ERROR] {e}")
 
-def valuta(valori):
-    global alert_attivo
-    if len(valori) < 3:
-        return
+# --- Scrittura su MongoDB ---
+def write_glucose(value, timestamp, direction):
+    try:
+        entry = {
+            "type": "sgv",
+            "sgv": value,
+            "dateString": timestamp.strftime("%Y-%m-%dT%H:%M:%S"),
+            "date": int(timestamp.timestamp() * 1000),
+            "direction": direction,
+            "device": "dexcom-server"
+        }
+        result = entries_collection.insert_one(entry)
+        print(f"[Mongo] Scritta glicemia {value} - ID: {result.inserted_id}")
+    except Exception as e:
+        print(f"[Mongo ERROR] {e}")
 
-    v1, v2, v3 = valori[-3:]
-    print(f"[DEBUG] Ultimi valori: {v1['valore']} {v2['valore']} {v3['valore']}")
+# --- Logica valutazione glicemia ---
+cronologia = []
+alert_attivo = None
+
+def valuta_glicemia(valore, trend, timestamp):
+    global cronologia, alert_attivo
+
+    cronologia.append({"valore": valore, "trend": trend, "timestamp": timestamp})
+    if len(cronologia) > 10:
+        cronologia.pop(0)
+
+    if alert_attivo and valore >= 78 and trend in ["→", "↑", "↗", "↑↑"]:
+        alert_attivo = None
+        print("✅ Alert disattivato")
 
     # Prova 1: 2 valori stabili tra 150 e 80
-    if all(150 >= v["valore"] >= 80 and v["trend"] == "→" for v in [v2, v3]):
-        invia_notifica("Prova 1", "Due glicemie stabili tra 150 e 80")
+    if len(cronologia) >= 2:
+        ultimi = cronologia[-2:]
+        if all(80 <= x["valore"] <= 150 and x["trend"] == "→" for x in ultimi):
+            if alert_attivo != "prova1":
+                send_telegram("TEST PROVA 1", f"Glicemie stabili: {ultimi[0]['valore']} → {ultimi[1]['valore']}")
+                alert_attivo = "prova1"
 
-    # Prova 2: 3 valori stabili ma in diminuzione
-    if all(v["trend"] == "→" for v in [v1, v2, v3]) and v1["valore"] > v2["valore"] > v3["valore"]:
-        invia_notifica("Prova 2", "Tre glicemie stabili ma in calo")
+    # Prova 2: 3 valori stabili ma in discesa
+    if len(cronologia) >= 3:
+        ultimi = cronologia[-3:]
+        if all(x["trend"] == "→" for x in ultimi) and ultimi[0]["valore"] > ultimi[1]["valore"] > ultimi[2]["valore"]:
+            if alert_attivo != "prova2":
+                send_telegram("TEST PROVA 2", f"Discesa stabile: {ultimi[0]['valore']} → {ultimi[2]['valore']}")
+                alert_attivo = "prova2"
 
-    # Prova 3: valore tra 100 e 70 in discesa
-    if 100 >= v3["valore"] >= 70 and v3["trend"] in ["↘", "↓"]:
-        invia_notifica("Prova 3", f"Glicemia {v3['valore']} in discesa singola")
+    # Prova 3: 100-70 con trend ↓
+    if 70 <= valore <= 100 and trend == "↓":
+        if alert_attivo != "prova3":
+            send_telegram("TEST PROVA 3", f"Glicemia {valore} in discesa ↓")
+            alert_attivo = "prova3"
 
-    # Prova 4: valore tra 70 e 100 in salita
-    if 100 >= v3["valore"] >= 70 and v3["trend"] in ["↗", "↑"]:
-        invia_notifica("Prova 4", f"Glicemia {v3['valore']} in salita singola")
-
-@app.route("/glicemia", methods=["GET"])
-def ottieni_glicemia():
-    try:
-        dexcom  = Dexcom(USERNAME, PASSWORD, ous=True)
-        reading = dexcom.get_current_glucose_reading()
-        if reading:
-            valore = float(reading.value)
-            timestamp = reading.time
-            trend = reading.trend_description or "Flat"
-            arrow = trend_to_arrow(reading.trend)
-            cronologia.append({"valore": valore, "trend": arrow, "timestamp": timestamp})
-            if len(cronologia) > 10:
-                cronologia.pop(0)
-            valuta(cronologia)
-            return jsonify({"glicemia": valore, "trend": trend}), 200
-        else:
-            return jsonify({"errore": "Nessuna lettura disponibile"}), 404
-    except Exception as e:
-        return jsonify({"errore": str(e)}), 500
+    # Prova 4: 70-100 con trend ↑
+    if 70 <= valore <= 100 and trend == "↑":
+        if alert_attivo != "prova4":
+            send_telegram("TEST PROVA 4", f"Glicemia {valore} in salita ↑")
+            alert_attivo = "prova4"
 
 @app.route("/glicemie-oggi", methods=["GET"])
 def glicemie_oggi():
     try:
-        data_param = request.args.get("data")
-        giorno = datetime.strptime(data_param, "%Y-%m-%d").date() if data_param else datetime.utcnow().date()
-
-        inizio = datetime.combine(giorno, datetime.min.time()) - timedelta(hours=2)
-        fine   = datetime.combine(giorno, datetime.max.time()) - timedelta(hours=2)
+        oggi = datetime.utcnow().date()
+        inizio = datetime.combine(oggi, datetime.min.time())
+        fine   = datetime.combine(oggi, datetime.max.time())
         ts_in  = int(inizio.timestamp() * 1000)
         ts_fn  = int(fine.timestamp() * 1000)
 
@@ -109,16 +112,31 @@ def glicemie_oggi():
             r["_id"] = str(r["_id"])
 
         return jsonify(risultati), 200
-
     except Exception as e:
         return jsonify({"errore": str(e)}), 500
 
-@app.after_request
-def after_request(response):
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Headers"] = "Content-Type,Authorization"
-    response.headers["Access-Control-Allow-Methods"] = "GET,POST,OPTIONS"
-    return response
+def invia_a_mongo():
+    try:
+        dexcom  = Dexcom(USERNAME, PASSWORD, ous=True)
+        reading = dexcom.get_current_glucose_reading()
+        if not reading:
+            print("⚠️ Nessuna lettura disponibile da Dexcom")
+            return
 
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5001)
+        valore    = float(reading.value)
+        timestamp = reading.time
+        trend     = reading.trend_arrow or "Flat"
+
+        write_glucose(valore, timestamp, trend)
+        valuta_glicemia(valore, trend, timestamp)
+
+    except Exception as e:
+        print(f"[Dexcom ERROR] {e}")
+    finally:
+        Timer(300, invia_a_mongo).start()
+
+# --- Avvio automatico ---
+invia_a_mongo()
+
+# --- Avvio server ---
+app.run(host="0.0.0.0", port=5001)
