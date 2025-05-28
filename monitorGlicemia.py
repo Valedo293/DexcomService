@@ -29,15 +29,18 @@ def trend_to_arrow(trend_raw):
     return trend_map.get(trend_raw, "→")
 
 def invia_notifica(titolo, messaggio):
+    print(f"[DEBUG] Invio notifica Telegram: {titolo} - {messaggio}")
+    print(f"[DEBUG] TOKEN: {TELEGRAM_TOKEN}")
     for chat_id in TELEGRAM_CHAT_IDS:
         chat_id = chat_id.strip()
         if not chat_id:
+            print("[DEBUG] Chat ID vuoto, salto.")
             continue
         try:
             url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
             payload = {"chat_id": chat_id, "text": f"{titolo.upper()}\n{messaggio}"}
             r = requests.post(url, json=payload)
-            print(f"✅ Telegram [{chat_id}]: {r.status_code}")
+            print(f"✅ Telegram [{chat_id}]: {r.status_code} - {r.text}")
         except Exception as e:
             print(f"❌ Errore Telegram: {e}")
 
@@ -47,19 +50,22 @@ def reset_alert():
         intervallo_notifica.cancel()
     alert_attivo = None
     intervallo_notifica = None
-    print("✅ Alert disattivato (automatico)")
+    print("[DEBUG] ✅ Alert disattivato (automatico)")
 
 def genera_alert(titolo, messaggio, codice, ripetizioni=2):
     global alert_attivo, intervallo_notifica
 
     if alert_attivo and alert_attivo["codice"] == codice:
+        print(f"[DEBUG] Alert {codice} già attivo, non invio doppio.")
         return None
 
+    print(f"[DEBUG] Genera alert: {titolo} | {messaggio} | codice: {codice}")
     alert_attivo = {"tipo": titolo, "azione": messaggio, "codice": codice, "ripetizioni": ripetizioni}
     invia_notifica(titolo, messaggio)
 
     def notifica_periodica():
         if alert_attivo and alert_attivo["ripetizioni"] > 0:
+            print("[DEBUG] Invio notifica periodica")
             invia_notifica(titolo, messaggio)
             alert_attivo["ripetizioni"] -= 1
             start_periodica()
@@ -84,62 +90,43 @@ def valuta_glicemia(valore, trend_raw, timestamp):
     if len(cronologia) > 10:
         cronologia.pop(0)
 
+    print(f"[DEBUG] Glicemia attuale: {valore} | Trend: {trend} | Timestamp: {timestamp}")
+    print(f"[DEBUG] Cronologia: {cronologia}")
+    print(f"[DEBUG] Alert attivo: {alert_attivo}")
+
     # RESET se glicemia torna stabile o in salita ≥ 78
     if alert_attivo and valore >= 78 and trend in ["→", "↑", "↗", "↑↑"]:
+        print("[DEBUG] Glicemia risalita, reset alert.")
         reset_alert()
 
-    # 1. Ipoglicemia grave <75
-    if valore < 75:
-        return genera_alert(
-            "Ipoglicemia",
-            "Correggi con: un succo, 3 bustine di zucchero o 3 caramelle zuccherate. Se IOB attivo anche uno snack",
-            "ipo_grave"
-        )
-
-    # 2. 86 in discesa lenta (↘ o ↓)
-    if valore == 86 and trend in ["↘", "↓"]:
-        return genera_alert(
-            "Ipoglicemia in arrivo",
-            "Correggi con mezzo succo.\nSe sei lontano dal pasto o hai insulina attiva, mangia anche uno snack: un Tuc, un grissino o una caramella zuccherata.",
-            "lenta_86"
-        )
-
-    # 3. 3 valori consecutivi stabili ma in discesa (tra 86 e 79)
+    # PROVA 1 - 3 glicemie tra 140-100 stabili
     if len(cronologia) >= 3:
         ultime = cronologia[-3:]
-        if all(x["trend"] == "→" for x in ultime) and ultime[0]["valore"] > ultime[1]["valore"] > ultime[2]["valore"] >= 79:
+        if all(100 <= x["valore"] <= 140 and x["trend"] == "→" for x in ultime):
             return genera_alert(
-                "Glicemia al limite",
-                "Mangia un Tuc, un grissino o una caramella.",
-                "limite_stabile"
+                "TEST PROVA 1",
+                "Tre valori stabili tra 100 e 140",
+                "test_3_stabili"
             )
 
-    # 4. Glicemia = 78 o 79 stabile → alert
-    if valore in [78, 79] and trend == "→":
-        return genera_alert(
-            "Glicemia al limite",
-            "Mangia un Tuc, un grissino o una caramella.",
-            "limite_78_stabile"
-        )
+    # PROVA 2 - due stabili tra 140-100 seguite da una discesa
+    if len(cronologia) >= 3:
+        c1, c2, c3 = cronologia[-3:]
+        if all(100 <= x["valore"] <= 140 for x in [c1, c2, c3]):
+            if c1["trend"] == "→" and c2["trend"] == "→" and c3["trend"] in ["↘", "↓"]:
+                return genera_alert(
+                    "TEST PROVA 2",
+                    "Due glicemie stabili tra 140-100 seguite da discesa",
+                    "test_2_stabili_1_discesa"
+                )
 
-    # 5. Da 90 a 70 in discesa rapida o doppia
-    if 70 <= valore <= 90 and trend in ["↓", "↓↓"]:
+    # PROVA 3 - 140 in salita
+    if valore == 140 and trend in ["↗", "↑", "↑↑"]:
         return genera_alert(
-            "Discesa glicemica rapida",
-            "Correggi subito con zuccheri semplici. Aggiungi uno snack se hai fatto insulina da meno di 2 ore.",
-            f"rapida_{valore}"
+            "TEST PROVA 3",
+            "Valore 140 in salita → occhio alla glicemia",
+            "test_140_salita"
         )
-
-    # 6. Due glicemie consecutive <90 con discesa lenta
-    if len(cronologia) >= 2:
-        c1 = cronologia[-1]
-        c2 = cronologia[-2]
-        if c1["valore"] < 90 and c2["valore"] < 90 and c1["trend"] in ["↘", "↓"] and c2["trend"] in ["↘", "↓"]:
-            return genera_alert(
-                "Discesa confermata",
-                "Glicemia in calo costante. Correggi con mezzo succo.",
-                "doppia_discesa_90"
-            )
 
     return None
 
@@ -151,9 +138,9 @@ def ottieni_chat_id():
         url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/getUpdates"
         r = requests.get(url)
         data = r.json()
-        print("Risposta Telegram:", data)
+        print("[DEBUG] Risposta Telegram:", data)
     except Exception as e:
-        print(f"Errore recupero chat ID: {e}")
+        print(f"[DEBUG] Errore recupero chat ID: {e}")
 
 if __name__ == "__main__":
-    print("Modulo monitorGlicemia attivo. Usa `valuta_glicemia(valore, trend, timestamp)` per test.")
+    print("Modulo monitorGlicemia TEST attivo. Usa `valuta_glicemia(valore, trend, timestamp)` per simulare.")
