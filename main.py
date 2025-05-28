@@ -40,7 +40,6 @@ alert_attivo          = None
 intervallo_notifica   = None
 
 def send_push(titolo, messaggio):
-    # Notifica via Telegram
     try:
         if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
             url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -70,6 +69,9 @@ def scrivi_glicemia_su_mongo(valore, timestamp, direction="Flat"):
 
 def valuta_glicemia(valore, trend, timestamp):
     global alert_cronologia, alert_attivo, intervallo_notifica
+
+    print("[DEBUG] ENTRATO IN valuta_glicemia")
+    print(f"📥 INPUT ricevuto - valore: {valore}, trend: {trend}, timestamp: {timestamp}")
 
     alert_cronologia.append({"valore": valore, "trend": trend, "timestamp": timestamp})
     if len(alert_cronologia) > 5:
@@ -193,6 +195,7 @@ def invia_a_mongo():
         trend     = reading.trend_arrow or "Flat"
 
         scrivi_glicemia_su_mongo(valore, timestamp, trend)
+        print(f"[DEBUG] CHIAMO valuta_glicemia: {valore} | {trend} | {timestamp}")
         valuta_glicemia(valore, trend, timestamp)
 
     except Exception as e:

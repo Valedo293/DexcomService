@@ -103,12 +103,12 @@ def valuta_glicemia_mongo():
         return genera_alert("TEST PROVA 1", "Tre valori stabili tra 100 e 140", "test_3_stabili")
 
     # PROVA 2
-    if all(100 <= x["valore"] <= 140 for x in [c1, c2, c3]) and c1["trend"] == "→" and c2["trend"] == "→" and c3["trend"] in ["↘", "↓"]:
+    if all(80 <= x["valore"] <= 140 for x in [c1, c2, c3]) and c1["trend"] == "→" and c2["trend"] == "→" and c3["trend"] in ["↘", "↓"]:
         return genera_alert("TEST PROVA 2", "Due stabili seguite da discesa", "test_2_stabili_discesa")
 
     # PROVA 3
-    if c3["valore"] == 140 and c3["trend"] in ["↗", "↑", "↑↑"]:
-        return genera_alert("TEST PROVA 3", "Valore 140 in salita", "test_140_up")
+    if c3["valore"] == 80 and c3["trend"] in ["↗", "↑", "↑↑"]:
+        return genera_alert("TEST PROVA 3", "Valore 80 in salita", "test_140_up")
 
     # PROVA 4
     if 80 <= c3["valore"] <= 100:
