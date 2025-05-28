@@ -10,7 +10,6 @@ MONGO_URI = os.getenv("MONGO_URI")
 def main():
     try:
         client = pymongo.MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
-        # Forza la connessione per verificare subito se funziona
         client.server_info()
         db = client["nightscout"]
         collection = db["entries"]
@@ -21,16 +20,24 @@ def main():
 
         while True:
             try:
-                ultimo_valore = collection.find_one(sort=[("date", pymongo.DESCENDING)])
+                # Prendo gli ultimi 5 documenti ordinati per data desc
+                ultimi_documenti = list(collection.find().sort("date", pymongo.DESCENDING).limit(5))
+                
+                if not ultimi_documenti:
+                    print("⚠️ Nessun dato trovato nella collezione 'entries'")
+                else:
+                    # Stampiamo i dati per capire cosa c’è
+                    print(f"📊 Ultimi {len(ultimi_documenti)} valori:")
+                    for doc in reversed(ultimi_documenti):  # dal più vecchio al più recente
+                        print(f"   id: {doc.get('_id')} | glicemia: {doc.get('sgv')} | trend: {doc.get('direction')} | timestamp: {doc.get('date')}")
 
-                if ultimo_valore:
-                    if ultimo_valore["_id"] != ultimo_id:
-                        ultimo_id = ultimo_valore["_id"]
-                        print(f"📊 Nuova glicemia: {ultimo_valore.get('sgv')} | Trend: {ultimo_valore.get('direction')} | Timestamp: {ultimo_valore.get('date')}")
+                    # Controllo se l’ultimo valore è nuovo rispetto a quello già letto
+                    ultimo_doc = ultimi_documenti[0]  # primo elemento è il più recente per sort desc
+                    if ultimo_doc.get('_id') != ultimo_id:
+                        print(f"✨ Nuovo valore rilevato: {ultimo_doc.get('sgv')} (id: {ultimo_doc.get('_id')})")
+                        ultimo_id = ultimo_doc.get('_id')
                     else:
                         print("⏳ Nessun nuovo valore")
-                else:
-                    print("⚠️ Nessun dato trovato nella collezione 'entries'")
 
             except Exception as e:
                 print(f"❌ Errore durante la lettura dal DB: {e}")
