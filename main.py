@@ -43,7 +43,7 @@ def send_push(titolo, messaggio):
     try:
         if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
             url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-            payload = {"chat_id": TELEGRAM_CHAT_ID, "text": f"{titolo.upper()}\n{messaggio}"}
+            payload = {"chat_id": TELEGRAM_CHAT_IDS, "text": f"{titolo.upper()}\n{messaggio}"}
             res = requests.post(url, json=payload)
             print(f"[TELEGRAM] {res.status_code}")
     except Exception as e:
