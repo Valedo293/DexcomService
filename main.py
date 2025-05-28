@@ -1,4 +1,4 @@
-MAIN (server Dexcom)
+
 from flask import Flask, jsonify, request
 from pydexcom import Dexcom
 from dotenv import load_dotenv
