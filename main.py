@@ -14,7 +14,7 @@ USERNAME        = os.getenv("DEXCOM_USERNAME")
 PASSWORD        = os.getenv("DEXCOM_PASSWORD")
 MONGO_URI       = os.getenv("MONGO_URI")
 TELEGRAM_TOKEN  = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_IDS")
 
 # --- Flask App ---
 app = Flask(__name__)
