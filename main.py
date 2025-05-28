@@ -10,35 +10,40 @@ from pymongo import MongoClient
 
 # --- Carica variabili ambiente ---
 load_dotenv()
-USERNAME        = os.getenv("DEXCOM_USERNAME")
-PASSWORD        = os.getenv("DEXCOM_PASSWORD")
-MONGO_URI       = os.getenv("MONGO_URI")
-TELEGRAM_TOKEN  = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_IDS")
+USERNAME = os.getenv("DEXCOM_USERNAME")
+PASSWORD = os.getenv("DEXCOM_PASSWORD")
+MONGO_URI = os.getenv("MONGO_URI")
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_IDS = os.getenv("TELEGRAM_CHAT_IDS", "").split(",")
 
 # --- Flask App ---
 app = Flask(__name__)
 CORS(app)
 
-# --- Connessione a MongoDB ---
+# --- Connessione MongoDB ---
 mongo_client = MongoClient(MONGO_URI)
 mongo_db = mongo_client["nightscout"]
 entries_collection = mongo_db.entries
 
-# --- Invia Notifica Telegram ---
+# --- Invio messaggi Telegram ---
 def send_telegram_message(title, message):
-    try:
-        if TELEGRAM_TOKEN and TELEGRAM_CHAT_ID:
-            url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-            payload = {"chat_id": TELEGRAM_CHAT_ID, "text": f"{title}\n{message}"}
-            res = requests.post(url, json=payload)
-            print(f"[TELEGRAM] Stato: {res.status_code}, Risposta: {res.text}")
-        else:
-            print("[⚠️] Token o Chat ID mancanti.")
-    except Exception as e:
-        print(f"[❌] Errore Telegram: {e}")
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_IDS:
+        print("[⚠️] Telegram: Token o Chat ID mancanti.")
+        return
 
-# --- Scrivi glicemia su Mongo ---
+    for chat_id in TELEGRAM_CHAT_IDS:
+        chat_id = chat_id.strip()
+        if not chat_id:
+            continue
+        try:
+            url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+            payload = {"chat_id": chat_id, "text": f"{title}\n{message}"}
+            res = requests.post(url, json=payload)
+            print(f"[TELEGRAM] → {chat_id}: {res.status_code} - {res.text}")
+        except Exception as e:
+            print(f"[❌] Errore Telegram per {chat_id}: {e}")
+
+# --- Scrittura Mongo ---
 def scrivi_glicemia_su_mongo(valore, timestamp, direction="Flat"):
     try:
         entry = {
@@ -54,7 +59,7 @@ def scrivi_glicemia_su_mongo(valore, timestamp, direction="Flat"):
     except Exception as e:
         print(f"[❌] Errore scrittura Mongo: {e}")
 
-# --- Lettura da Dexcom ---
+# --- Lettura e invio ---
 def invia_a_mongo():
     try:
         print("[INFO] Avvio lettura da Dexcom...")
@@ -70,14 +75,14 @@ def invia_a_mongo():
 
         print(f"[DEXCOM] Valore: {valore}, Trend: {trend}, Timestamp: {timestamp}")
         scrivi_glicemia_su_mongo(valore, timestamp, trend)
-        send_telegram_message("📈 Nuovo valore glicemico", f"{valore} mg/dl - Trend: {trend}")
+        send_telegram_message("📊 Nuovo valore glicemico", f"{valore} mg/dL\nTrend: {trend}")
 
     except Exception as e:
-        print(f"[❌] Errore lettura Dexcom: {e}")
+        print(f"[❌] Errore Dexcom: {e}")
     finally:
         Timer(300, invia_a_mongo).start()
 
-# --- Rotte ---
+# --- Endpoint Dexcom diretto ---
 @app.route("/glicemia", methods=["GET"])
 def ottieni_glicemia():
     try:
@@ -100,7 +105,7 @@ def after_request(response):
     response.headers.add("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
     return response
 
-# --- Avvio ---
-send_telegram_message("🔔 Server Avviato", "Monitoraggio glicemia attivo.")
+# --- Avvio del sistema ---
+send_telegram_message("🟢 Server avviato", "Monitoraggio glicemia attivo.")
 invia_a_mongo()
 app.run(host="0.0.0.0", port=5001)
