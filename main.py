@@ -19,8 +19,8 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 MONGO_URI = os.getenv("MONGO_URI")
 
 # --- Flask App ---
-app = Flask(_ _name_ _)
-CORS(app, resources={r"/": {"origins": ""}})
+app = Flask(__name__)
+CORS(app, resources={r"/*": {"origins": "*"}})
 
 # --- Headers per Supabase ---
 headers = {
@@ -136,7 +136,7 @@ def invia_a_mongo():
         dexcom = Dexcom(USERNAME, PASSWORD, ous=True)
         reading = dexcom.get_current_glucose_reading()
         if not reading:
-            print("⚠ Nessuna lettura disponibile da Dexcom")
+            print("⚠️ Nessuna lettura disponibile da Dexcom")
             return
 
         valore = float(reading.value)
@@ -158,7 +158,7 @@ def after_request(response):
     return response
 
 # --- Avvio ---
-if _name_ == "_main_":
+if __name__ == "__main__":
     try:
         subprocess.Popen(["python3", "monitorGlicemia.py"])
         print("✅ MonitorGlicemia avviato in parallelo")
