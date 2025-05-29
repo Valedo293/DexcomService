@@ -143,77 +143,69 @@ def manda_telegram(messaggio):
 # ---- MonitorGlicemia aggiornato ----
 eventi_attivi = {}
 notifiche_inviate = {}
+silenzio_attivo = {}
 
 def reset_evento(codice):
-    if codice in eventi_attivi:
-        print(f"✅ Evento {codice} risolto")
-        eventi_attivi.pop(codice)
-        notifiche_inviate.pop(codice, None)
+    eventi_attivi.pop(codice, None)
+    notifiche_inviate.pop(codice, None)
+    silenzio_attivo.pop(codice, None)
 
 def manda_notifica(codice, titolo, messaggio):
     if notifiche_inviate.get(codice, 0) < 2:
-        print(f"[ALERT] {titolo} - {messaggio}")
         manda_telegram(f"🚨 {titolo}\n{messaggio}")
         notifiche_inviate[codice] = notifiche_inviate.get(codice, 0) + 1
         eventi_attivi[codice] = True
+        print(f"[NOTIFICA] {codice}: {titolo}")
     else:
-        print(f"[SKIP] Massimo alert già inviati per {codice}")
+        print(f"[SKIP] Max notifiche per {codice}")
 
 def monitor_loop():
     try:
         docs = list(entries_collection.find().sort("date", -1).limit(5))
         if len(docs) < 3:
-            print("⚠️ Dati insufficienti")
             return
 
         cronologia = [{"valore": d["sgv"], "trend": d.get("direction", "→")} for d in reversed(docs)]
-        valore = cronologia[-1]["valore"]
-        trend = cronologia[-1]["trend"]
-        print(f"📈 Ultima glicemia: {valore} - Trend: {trend}")
+        v1, v2, v3 = cronologia[-3:]
 
-        # Reset automatico eventi
-        if valore >= 79 and trend in ["→", "↑", "↗", "↑↑"]:
+        # RESET se glicemie ≥ 90 x 2 e trend positivo
+        if v2["valore"] >= 90 and v3["valore"] >= 90 and v2["trend"] in ["→", "↑", "↗", "↑↑"] and v3["trend"] in ["→", "↑", "↗", "↑↑"]:
             for codice in list(eventi_attivi):
                 reset_evento(codice)
 
-        # Eventi
-        if valore < 75:
-            manda_notifica("ipo_grave", "Ipoglicemia",
-                "Correggi con: un succo, 3 bustine di zucchero o 3 caramelle zuccherate. Se IOB attivo anche uno snack.")
+        # 1. Discesa rapida 80–90 con trend ↓
+        if 80 <= v3["valore"] < 90 and v3["trend"] == "↓":
+            manda_notifica("discesa_rapida", "Discesa glicemica rapida", "Glicemia in calo. Valore < 90 con trend ↓.")
+        
+        elif "discesa_rapida" in eventi_attivi and v3["valore"] < 90 and v3["trend"] == "↓":
+            manda_notifica("discesa_rapida", "Discesa glicemica continua", "Ancora sotto 90 con ↓.")
 
-        if valore == 86 and trend in ["↘", "↓"]:
-            manda_notifica("lenta_86", "Ipoglicemia in arrivo",
-                "Correggi con mezzo succo. Se sei lontano dal pasto o hai insulina attiva, mangia anche uno snack.")
+        # 2. Doppia discesa ↘
+        if v2["valore"] <= 90 and v3["valore"] <= 90 and v2["trend"] == "↘" and v3["trend"] == "↘":
+            manda_notifica("doppia_discesa", "Doppia discesa confermata", "Due glicemie consecutive ≤ 90 con trend ↘.")
 
-        if all(x["trend"] == "→" for x in cronologia[-3:]) and \
-                cronologia[-3]["valore"] > cronologia[-2]["valore"] > cronologia[-1]["valore"] >= 79:
-            manda_notifica("limite_stabile", "Glicemia al limite",
-                "Mangia un Tuc, un grissino o una caramella.")
-
-        if valore in [78, 79] and trend == "→":
-            manda_notifica("limite_78_stabile", "Glicemia al limite",
-                "Mangia un Tuc, un grissino o una caramella.")
-
-        if 70 <= valore <= 90 and trend in ["↓", "↓↓"]:
-            manda_notifica(f"rapida_{valore}", "Discesa glicemica rapida",
-                "Correggi subito con zuccheri semplici. Aggiungi uno snack se hai fatto insulina da meno di 2 ore.")
-
-        if cronologia[-1]["valore"] < 90 and cronologia[-2]["valore"] < 90 and \
-                cronologia[-1]["trend"] in ["↘", "↓"] and cronologia[-2]["trend"] in ["↘", "↓"]:
-            manda_notifica("doppia_discesa_90", "Discesa confermata",
-                "Glicemia in calo costante. Correggi con mezzo succo.")
+        # 3. Discesa lenta → tra 78–90, max 2 notifiche, silenzio 5 min
+        if v2["valore"] <= 86 and v3["valore"] <= 86 and v2["trend"] == "→" and v3["trend"] == "→":
+            codice = "lenta_stabile"
+            if codice not in silenzio_attivo:
+                manda_notifica(codice, "Discesa lenta stabile", "Due valori stabili ≤ 86: attenzione.")
+                if notifiche_inviate[codice] == 2:
+                    silenzio_attivo[codice] = datetime.utcnow() + timedelta(minutes=5)
+        # Silenzio attivo scaduto
+        for codice in list(silenzio_attivo):
+            if datetime.utcnow() > silenzio_attivo[codice]:
+                reset_evento(codice)
 
     except Exception as e:
-        print(f"❌ Errore loop monitor: {e}")
+        print(f"❌ Errore monitor: {e}")
     finally:
-        Timer(40, monitor_loop).start()
+        Timer(60, monitor_loop).start()
 
 def invia_a_mongo():
     try:
         dexcom = Dexcom(USERNAME, PASSWORD, ous=True)
         reading = dexcom.get_current_glucose_reading()
         if not reading:
-            print("⚠️ Nessuna lettura disponibile da Dexcom")
             return
 
         valore = float(reading.value)
