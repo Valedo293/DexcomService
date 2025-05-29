@@ -19,7 +19,7 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 MONGO_URI = os.getenv("MONGO_URI")
 
 # --- Flask App ---
-app = Flask(__name__)
+app = Flask(_ _name_ _)
 CORS(app, resources={r"/": {"origins": ""}})
 
 # --- Headers per Supabase ---
