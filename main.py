@@ -140,25 +140,24 @@ def manda_telegram(messaggio):
         except Exception as e:
             print(f"[ERRORE TELEGRAM] {e}")
 
-# --- MonitorGlicemia ---
-alert_attivo = False
-ultimo_alert = None
+# ---- MonitorGlicemia aggiornato ----
+eventi_attivi = {}
+notifiche_inviate = {}
 
-def reset_alert():
-    global alert_attivo, ultimo_alert
-    print("✅ Condizioni risolte, alert chiuso")
-    alert_attivo = False
-    ultimo_alert = None
+def reset_evento(codice):
+    if codice in eventi_attivi:
+        print(f"✅ Evento {codice} risolto")
+        eventi_attivi.pop(codice)
+        notifiche_inviate.pop(codice, None)
 
-def genera_alert(titolo, messaggio, codice):
-    global alert_attivo, ultimo_alert
-    if ultimo_alert != codice:
+def manda_notifica(codice, titolo, messaggio):
+    if notifiche_inviate.get(codice, 0) < 2:
         print(f"[ALERT] {titolo} - {messaggio}")
         manda_telegram(f"🚨 {titolo}\n{messaggio}")
-        alert_attivo = True
-        ultimo_alert = codice
+        notifiche_inviate[codice] = notifiche_inviate.get(codice, 0) + 1
+        eventi_attivi[codice] = True
     else:
-        print(f"[SKIP] Alert {codice} già attivo")
+        print(f"[SKIP] Massimo alert già inviati per {codice}")
 
 def monitor_loop():
     try:
@@ -170,43 +169,39 @@ def monitor_loop():
         cronologia = [{"valore": d["sgv"], "trend": d.get("direction", "→")} for d in reversed(docs)]
         valore = cronologia[-1]["valore"]
         trend = cronologia[-1]["trend"]
-
         print(f"📈 Ultima glicemia: {valore} - Trend: {trend}")
 
-        if alert_attivo and valore >= 78 and trend in ["→", "↑", "↗", "↑↑"]:
-            reset_alert()
+        # Reset automatico eventi
+        if valore >= 79 and trend in ["→", "↑", "↗", "↑↑"]:
+            for codice in list(eventi_attivi):
+                reset_evento(codice)
 
+        # Eventi
         if valore < 75:
-            genera_alert("Ipoglicemia",
-                         "Correggi con: un succo, 3 bustine di zucchero o 3 caramelle zuccherate. Se IOB attivo anche uno snack",
-                         "ipo_grave")
+            manda_notifica("ipo_grave", "Ipoglicemia",
+                "Correggi con: un succo, 3 bustine di zucchero o 3 caramelle zuccherate. Se IOB attivo anche uno snack.")
 
         if valore == 86 and trend in ["↘", "↓"]:
-            genera_alert("Ipoglicemia in arrivo",
-                         "Correggi con mezzo succo. Se sei lontano dal pasto o hai insulina attiva, mangia anche uno snack.",
-                         "lenta_86")
+            manda_notifica("lenta_86", "Ipoglicemia in arrivo",
+                "Correggi con mezzo succo. Se sei lontano dal pasto o hai insulina attiva, mangia anche uno snack.")
 
         if all(x["trend"] == "→" for x in cronologia[-3:]) and \
                 cronologia[-3]["valore"] > cronologia[-2]["valore"] > cronologia[-1]["valore"] >= 79:
-            genera_alert("Glicemia al limite",
-                         "Mangia un Tuc, un grissino o una caramella.",
-                         "limite_stabile")
+            manda_notifica("limite_stabile", "Glicemia al limite",
+                "Mangia un Tuc, un grissino o una caramella.")
 
         if valore in [78, 79] and trend == "→":
-            genera_alert("Glicemia al limite",
-                         "Mangia un Tuc, un grissino o una caramella.",
-                         "limite_78_stabile")
+            manda_notifica("limite_78_stabile", "Glicemia al limite",
+                "Mangia un Tuc, un grissino o una caramella.")
 
         if 70 <= valore <= 90 and trend in ["↓", "↓↓"]:
-            genera_alert("Discesa glicemica rapida",
-                         "Correggi subito con zuccheri semplici. Aggiungi uno snack se hai fatto insulina da meno di 2 ore.",
-                         f"rapida_{valore}")
+            manda_notifica(f"rapida_{valore}", "Discesa glicemica rapida",
+                "Correggi subito con zuccheri semplici. Aggiungi uno snack se hai fatto insulina da meno di 2 ore.")
 
         if cronologia[-1]["valore"] < 90 and cronologia[-2]["valore"] < 90 and \
                 cronologia[-1]["trend"] in ["↘", "↓"] and cronologia[-2]["trend"] in ["↘", "↓"]:
-            genera_alert("Discesa confermata",
-                         "Glicemia in calo costante. Correggi con mezzo succo.",
-                         "doppia_discesa_90")
+            manda_notifica("doppia_discesa_90", "Discesa confermata",
+                "Glicemia in calo costante. Correggi con mezzo succo.")
 
     except Exception as e:
         print(f"❌ Errore loop monitor: {e}")
