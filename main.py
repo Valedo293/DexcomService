@@ -1,4 +1,3 @@
-
 from flask import Flask, jsonify, request
 from pydexcom import Dexcom
 from dotenv import load_dotenv
@@ -9,6 +8,7 @@ from threading import Timer
 from datetime import datetime, timedelta
 import json
 from pymongo import MongoClient
+import subprocess  # 👈 Aggiunto per avviare monitorGlicemia.py
 
 # --- Carica variabili ambiente ---
 load_dotenv()
@@ -19,8 +19,8 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 MONGO_URI = os.getenv("MONGO_URI")
 
 # --- Flask App ---
-app = Flask(__name__)
-CORS(app, resources={r"/*": {"origins": "*"}})
+app = Flask(_name_)
+CORS(app, resources={r"/": {"origins": ""}})
 
 # --- Headers per Supabase ---
 headers = {
@@ -136,7 +136,7 @@ def invia_a_mongo():
         dexcom = Dexcom(USERNAME, PASSWORD, ous=True)
         reading = dexcom.get_current_glucose_reading()
         if not reading:
-            print("⚠️ Nessuna lettura disponibile da Dexcom")
+            print("⚠ Nessuna lettura disponibile da Dexcom")
             return
 
         valore = float(reading.value)
@@ -158,5 +158,12 @@ def after_request(response):
     return response
 
 # --- Avvio ---
-invia_a_mongo()
-app.run(host="0.0.0.0", port=5001)
+if _name_ == "_main_":
+    try:
+        subprocess.Popen(["python3", "monitorGlicemia.py"])
+        print("✅ MonitorGlicemia avviato in parallelo")
+    except Exception as e:
+        print(f"❌ Errore avvio MonitorGlicemia: {e}")
+
+    invia_a_mongo()
+    app.run(host="0.0.0.0", port=5001)
