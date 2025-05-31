@@ -16,7 +16,7 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 MONGO_URI = os.getenv("MONGO_URI")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-CHAT_IDS = os.getenv("TELEGRAM_CHAT_IDS", "").split(",")
+CHAT_IDS = [cid.strip() for cid in os.getenv("TELEGRAM_CHAT_IDS", "").split(",") if cid.strip()]
 
 # --- Flask App ---
 app = Flask(__name__)
@@ -103,12 +103,7 @@ def ottieni_glicemia():
 def glicemie_oggi():
     try:
         data_param = request.args.get("data")
-
-        if data_param:
-            giorno = datetime.strptime(data_param, "%Y-%m-%d").date()
-        else:
-            giorno = datetime.utcnow().date()
-
+        giorno = datetime.strptime(data_param, "%Y-%m-%d").date() if data_param else datetime.utcnow().date()
         inizio = datetime.combine(giorno, datetime.min.time()) - timedelta(hours=2)
         fine = datetime.combine(giorno, datetime.max.time()) - timedelta(hours=2)
 
@@ -126,19 +121,8 @@ def glicemie_oggi():
             r["_id"] = str(r["_id"])
 
         return jsonify(risultati)
-
     except Exception as e:
         return jsonify({"errore": str(e)}), 500
-
-# --- Telegram & Allarmi Glicemici ---
-eventi_attivi = {}
-notifiche_inviate = {}
-ultimi_timestamp = {}
-
-def reset_evento(codice):
-    eventi_attivi.pop(codice, None)
-    notifiche_inviate.pop(codice, None)
-    ultimi_timestamp.pop(codice, None)
 
 def manda_telegram(messaggio):
     for chat_id in CHAT_IDS:
@@ -149,11 +133,109 @@ def manda_telegram(messaggio):
         except Exception as e:
             print(f"[ERRORE TELEGRAM] {e}")
 
-def manda_notifica(codice, messaggio):
-    if notifiche_inviate.get(codice, 0) < 3:
-        manda_telegram(messaggio)
+# Stato eventi
+eventi_attivi = {}
+notifiche_inviate = {}
+
+def reset_evento(codice):
+    if codice in eventi_attivi:
+        print(f"✅ Evento {codice} risolto")
+        eventi_attivi.pop(codice)
+        notifiche_inviate.pop(codice, None)
+
+def manda_notifica(codice, titolo, messaggio):
+    if notifiche_inviate.get(codice, 0) < 2:
+        print(f"[ALERT] {titolo} - {messaggio}")
+        manda_telegram(f"🚨 {titolo}\n{messaggio}")
         notifiche_inviate[codice] = notifiche_inviate.get(codice, 0) + 1
-        eventi_attivi[codice] = eventi_attivi.get(codice, {})
-        print(f"[NOTIFICA] {codice}: ciclo {notifiche_inviate[codice]}")
+        eventi_attivi[codice] = True
     else:
-        print(f"[SKIP] Max notifiche per {codice}")
+        print(f"[SKIP] Massimo alert già inviati per {codice}")
+
+def monitor_loop():
+    try:
+        docs = list(entries_collection.find().sort("date", -1).limit(5))
+        if len(docs) < 3:
+            print("⚠️ Dati insufficienti")
+            return
+
+        cronologia = [{
+            "valore": d["sgv"],
+            "trend": d.get("direction", "→"),
+            "timestamp": d["date"]
+        } for d in reversed(docs)]
+
+        ultimo = cronologia[-1]
+        valore = ultimo["valore"]
+        trend = ultimo["trend"]
+        timestamp = ultimo["timestamp"]
+
+        print(f"📈 Ultima glicemia: {valore} - Trend: {trend}")
+
+        if valore >= 85 and trend in ["→", "↑", "↗", "↑↑"]:
+            for codice in list(eventi_attivi):
+                reset_evento(codice)
+
+        codice_base = f"{valore}_{trend}_{timestamp}"
+
+        if valore < 90 and trend in ["↓", "↓↓"]:
+            manda_notifica(codice_base + "_rapida", "Discesa rapida",
+                "Correggi subito con un succo o 3 bustine di zucchero o 3 caramelle zuccherate.")
+
+        if all(x["trend"] == "→" for x in cronologia[-3:]) and \
+           cronologia[-1]["valore"] <= 90 and cronologia[-1]["valore"] > 70:
+            manda_notifica(codice_base + "_stabile_90", "Glicemia stabile ma in calo",
+                "Monitora attentamente.\nSe continua a scendere, interverremo.")
+
+        if valore == 70 and trend == "→":
+            manda_notifica(codice_base + "_stabile_70", "Glicemia a 70",
+                "Se non hai corretto, fallo ora.\nPrendi mezzo succo o 2 bustine di zucchero.")
+
+        if valore < 70 and trend == "→":
+            manda_notifica(codice_base + "_stabile_sotto70", "Glicemia ancora in discesa",
+                "Prendi subito un succo intero.\nSe hai già corretto, attendi e monitora.")
+
+        if trend == "↘" and cronologia[-1]["valore"] <= 86 and cronologia[-2]["valore"] >= 90:
+            manda_notifica(codice_base + "_lenta_salto", "Discesa glicemica lenta",
+                "Correggi subito con un succo intero, oppure 3 bustine di zucchero o 3 caramelle zuccherate.")
+
+        if all(x["trend"] == "↘" for x in cronologia[-3:]) and \
+           all(x["valore"] < 90 for x in cronologia[-3:]):
+            manda_notifica(codice_base + "_lenta_graduale", "Discesa lenta confermata",
+                "Correggi con un succo intero o 3 bustine di zucchero.")
+
+    except Exception as e:
+        print(f"❌ Errore loop monitor: {e}")
+    finally:
+        Timer(40, monitor_loop).start()
+
+def invia_a_mongo():
+    try:
+        dexcom = Dexcom(USERNAME, PASSWORD, ous=True)
+        reading = dexcom.get_current_glucose_reading()
+        if not reading:
+            print("⚠️ Nessuna lettura disponibile da Dexcom")
+            return
+
+        valore = float(reading.value)
+        timestamp = reading.time
+        trend = reading.trend_arrow or "Flat"
+
+        scrivi_glicemia_su_mongo(valore, timestamp, trend)
+
+    except Exception as e:
+        print(f"❌ Errore lettura/scrittura Dexcom: {e}")
+    finally:
+        Timer(300, invia_a_mongo).start()
+
+@app.after_request
+def after_request(response):
+    response.headers.add("Access-Control-Allow-Origin", "*")
+    response.headers.add("Access-Control-Allow-Headers", "Content-Type,Authorization")
+    response.headers.add("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
+    return response
+
+# --- Avvio ---
+invia_a_mongo()
+monitor_loop()
+app.run(host="0.0.0.0", port=5001)
