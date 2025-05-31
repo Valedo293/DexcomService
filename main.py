@@ -168,7 +168,6 @@ def monitor_loop():
         ultimo = cronologia[-1]
         valore = ultimo["valore"]
         trend = ultimo["trend"]
-        timestamp = ultimo["timestamp"]
 
         print(f"📈 Ultima glicemia: {valore} - Trend: {trend}")
 
@@ -176,32 +175,30 @@ def monitor_loop():
             for codice in list(eventi_attivi):
                 reset_evento(codice)
 
-        codice_base = f"{valore}_{trend}_{timestamp}"
-
         if valore < 90 and trend in ["↓", "↓↓"]:
-            manda_notifica(codice_base + "_rapida", "Discesa rapida",
+            manda_notifica("rapida", "Discesa rapida",
                 "Correggi subito con un succo o 3 bustine di zucchero o 3 caramelle zuccherate.")
 
         if all(x["trend"] == "→" for x in cronologia[-3:]) and \
-           cronologia[-1]["valore"] <= 90 and cronologia[-1]["valore"] > 70:
-            manda_notifica(codice_base + "_stabile_90", "Glicemia stabile ma in calo",
+           70 < cronologia[-1]["valore"] <= 86:
+            manda_notifica("stabile_86", "Glicemia stabile ma in calo",
                 "Monitora attentamente.\nSe continua a scendere, interverremo.")
 
         if valore == 70 and trend == "→":
-            manda_notifica(codice_base + "_stabile_70", "Glicemia a 70",
+            manda_notifica("stabile_70", "Glicemia a 70",
                 "Se non hai corretto, fallo ora.\nPrendi mezzo succo o 2 bustine di zucchero.")
 
         if valore < 70 and trend == "→":
-            manda_notifica(codice_base + "_stabile_sotto70", "Glicemia ancora in discesa",
+            manda_notifica("stabile_sotto70", "Glicemia ancora in discesa",
                 "Prendi subito un succo intero.\nSe hai già corretto, attendi e monitora.")
 
         if trend == "↘" and cronologia[-1]["valore"] <= 86 and cronologia[-2]["valore"] >= 90:
-            manda_notifica(codice_base + "_lenta_salto", "Discesa glicemica lenta",
-                "Correggi subito con un succo intero, oppure 3 bustine di zucchero o 3 caramelle zuccherate.")
+            manda_notifica("lenta_salto", "Discesa glicemica lenta",
+                "Correggi subito con un succo intero o 3 bustine di zucchero.")
 
         if all(x["trend"] == "↘" for x in cronologia[-3:]) and \
            all(x["valore"] < 90 for x in cronologia[-3:]):
-            manda_notifica(codice_base + "_lenta_graduale", "Discesa lenta confermata",
+            manda_notifica("lenta_graduale", "Discesa lenta confermata",
                 "Correggi con un succo intero o 3 bustine di zucchero.")
 
     except Exception as e:
