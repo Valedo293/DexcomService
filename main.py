@@ -1,3 +1,4 @@
+
 from flask import Flask, jsonify, request
 from pydexcom import Dexcom
 from dotenv import load_dotenv
@@ -7,6 +8,7 @@ import requests
 from threading import Timer
 from datetime import datetime, timedelta
 from pymongo import MongoClient
+import time
 
 # --- Carica variabili ambiente ---
 load_dotenv()
@@ -133,7 +135,6 @@ def manda_telegram(messaggio):
         except Exception as e:
             print(f"[ERRORE TELEGRAM] {e}")
 
-# Stato eventi
 eventi_attivi = {}
 notifiche_inviate = {}
 
@@ -144,15 +145,92 @@ def reset_evento(codice):
         notifiche_inviate.pop(codice, None)
 
 def manda_notifica(codice, titolo, messaggio):
-    if notifiche_inviate.get(codice, 0) < 2:
-        print(f"[ALERT] {titolo} - {messaggio}")
-        manda_telegram(f"🚨 {titolo}\n{messaggio}")
-        notifiche_inviate[codice] = notifiche_inviate.get(codice, 0) + 1
-        eventi_attivi[codice] = True
-    else:
-        print(f"[SKIP] Massimo alert già inviati per {codice}")
+    adesso = time.time()
+    numero, ultimo = notifiche_inviate.get(codice, (0, 0))
+
+    if numero >= 2 and (adesso - ultimo) < 1800:
+        print(f"[SKIP] {codice} già inviato {numero} volte. Aspetto prima dei 30 minuti.")
+        return
+
+def manda_notifica(codice, titolo, messaggio):
+    adesso = time.time()
+    numero, ultimo = notifiche_inviate.get(codice, (0, 0))
+
+    if numero >= 2 and (adesso - ultimo) < 1800:
+        print(f"[SKIP] {codice} già inviato {numero} volte. Aspetto prima dei 30 minuti.")
+        return
+
+    print(f"[ALERT] {titolo} - {messaggio}")
+    manda_telegram(f"🚨 {titolo}\n{messaggio}")
+    notifiche_inviate[codice] = (numero + 1, adesso)
+    eventi_attivi[codice] = True
+    eventi_attivi[codice] = True
+
+
+evento_stabile = {}
+
+def gestisci_discesa_stabile(cronologia, evento_stabile):
+    try:
+        ora = datetime.utcnow()
+        valore = cronologia[-1]["valore"]
+        trend = cronologia[-1]["trend"]
+        timestamp = cronologia[-1]["timestamp"]
+
+        if evento_stabile.get("pausa_fino") and ora < evento_stabile["pausa_fino"]:
+            print("🔕 Pausa attiva, nessun alert inviato")
+            return evento_stabile
+
+        if evento_stabile.get("ultimo_timestamp") == timestamp:
+            print("🔁 Glicemia già analizzata, skip")
+            return evento_stabile
+
+        evento_stabile["ultimo_timestamp"] = timestamp
+
+        if valore >= 83 and trend in ["→", "↗", "↑", "↑↑"]:
+            if evento_stabile.get("attivo"):
+                print("✅ Evento stabile chiuso per risalita")
+            return {
+                "attivo": False,
+                "stato": None,
+                "ultimo_timestamp": timestamp,
+                "pausa_fino": None
+            }
+
+        if not evento_stabile.get("attivo"):
+            ultimi_3 = cronologia[-3:]
+            if all(x["valore"] < 85 for x in ultimi_3) and \
+               ultimi_3[0]["valore"] > ultimi_3[1]["valore"] > ultimi_3[2]["valore"] and \
+               all(x["trend"] == "→" for x in ultimi_3):
+                manda_telegram("📉 Discesa glicemica stabile confermata\nMonitora con attenzione.")
+                return {
+                    "attivo": True,
+                    "stato": "monitoraggio",
+                    "ultimo_timestamp": timestamp,
+                    "pausa_fino": None
+                }
+            return evento_stabile
+
+        if evento_stabile["attivo"]:
+            stato = evento_stabile.get("stato")
+
+            if valore <= 80 and stato == "monitoraggio":
+                manda_telegram("⚠️ Sei al limite (80 mg/dL)\nValuta se correggere.")
+                evento_stabile["stato"] = "limite_80"
+
+            elif valore <= 75 and stato != "correzione":
+                manda_telegram("🚨 Glicemia a 75\nCorreggi subito con un succo o zuccheri.")
+                evento_stabile["stato"] = "correzione"
+                evento_stabile["pausa_fino"] = ora + timedelta(minutes=20)
+
+        return evento_stabile
+
+    except Exception as e:
+        print(f"❌ Errore in gestisci_discesa_stabile: {e}")
+        return evento_stabile
+
 
 def monitor_loop():
+    global evento_stabile
     try:
         docs = list(entries_collection.find().sort("date", -1).limit(5))
         if len(docs) < 3:
@@ -179,8 +257,7 @@ def monitor_loop():
             manda_notifica("rapida", "Discesa rapida",
                 "Correggi subito con un succo o 3 bustine di zucchero o 3 caramelle zuccherate.")
 
-        if all(x["trend"] == "→" for x in cronologia[-3:]) and \
-           70 < cronologia[-1]["valore"] <= 86:
+        if all(x["trend"] == "→" for x in cronologia[-3:]) and 70 < cronologia[-1]["valore"] <= 86:
             manda_notifica("stabile_86", "Glicemia stabile ma in calo",
                 "Monitora attentamente.\nSe continua a scendere, interverremo.")
 
@@ -196,15 +273,11 @@ def monitor_loop():
             manda_notifica("lenta_salto", "Discesa glicemica lenta",
                 "Correggi subito con un succo intero o 3 bustine di zucchero.")
 
-        if all(x["trend"] == "↘" for x in cronologia[-3:]) and \
-           all(x["valore"] < 90 for x in cronologia[-3:]):
+        if all(x["trend"] == "↘" for x in cronologia[-3:]) and all(x["valore"] < 90 for x in cronologia[-3:]):
             manda_notifica("lenta_graduale", "Discesa lenta confermata",
                 "Correggi con un succo intero o 3 bustine di zucchero.")
-
     except Exception as e:
         print(f"❌ Errore loop monitor: {e}")
-    finally:
-        Timer(40, monitor_loop).start()
 
 def invia_a_mongo():
     try:
@@ -219,6 +292,7 @@ def invia_a_mongo():
         trend = reading.trend_arrow or "Flat"
 
         scrivi_glicemia_su_mongo(valore, timestamp, trend)
+        monitor_loop()
 
     except Exception as e:
         print(f"❌ Errore lettura/scrittura Dexcom: {e}")
@@ -234,5 +308,4 @@ def after_request(response):
 
 # --- Avvio ---
 invia_a_mongo()
-monitor_loop()
 app.run(host="0.0.0.0", port=5001)
