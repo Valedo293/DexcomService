@@ -176,16 +176,19 @@ def gestisci_discesa_stabile(cronologia, evento_stabile):
         trend = cronologia[-1]["trend"]
         timestamp = cronologia[-1]["timestamp"]
 
+        # 🔕 Pausa attiva
         if evento_stabile.get("pausa_fino") and ora < evento_stabile["pausa_fino"]:
-            print("🔕 Pausa attiva, nessun alert inviato")
+            print("🔕 Pausa attiva fino a", evento_stabile["pausa_fino"])
             return evento_stabile
 
+        # 🔁 Glicemia già trattata
         if evento_stabile.get("ultimo_timestamp") == timestamp:
             print("🔁 Glicemia già analizzata, skip")
             return evento_stabile
 
         evento_stabile["ultimo_timestamp"] = timestamp
 
+        # ✅ Reset evento se risale ≥83 con trend stabile o positivo
         if valore >= 83 and trend in ["→", "↗", "↑", "↑↑"]:
             if evento_stabile.get("attivo"):
                 print("✅ Evento stabile chiuso per risalita")
@@ -196,11 +199,15 @@ def gestisci_discesa_stabile(cronologia, evento_stabile):
                 "pausa_fino": None
             }
 
+        # 🚦 Avvio evento: 3 glicemie con discesa coerente da ≥90, tutte trend →
         if not evento_stabile.get("attivo"):
             ultimi_3 = cronologia[-3:]
-            if all(x["valore"] < 85 for x in ultimi_3) and \
-               ultimi_3[0]["valore"] > ultimi_3[1]["valore"] > ultimi_3[2]["valore"] and \
-               all(x["trend"] == "→" for x in ultimi_3):
+            if (
+                ultimi_3[0]["valore"] >= 90 and
+                ultimi_3[0]["valore"] > ultimi_3[1]["valore"] > ultimi_3[2]["valore"] and
+                all(x["valore"] < 85 for x in ultimi_3) and
+                all(x["trend"] == "→" for x in ultimi_3)
+            ):
                 manda_telegram("📉 Discesa glicemica stabile confermata\nMonitora con attenzione.")
                 return {
                     "attivo": True,
@@ -210,17 +217,17 @@ def gestisci_discesa_stabile(cronologia, evento_stabile):
                 }
             return evento_stabile
 
-        if evento_stabile["attivo"]:
-            stato = evento_stabile.get("stato")
+        # 📡 Evento attivo: monitoraggio → limite_80 → correzione
+        stato = evento_stabile.get("stato")
 
-            if valore <= 80 and stato == "monitoraggio":
-                manda_telegram("⚠️ Sei al limite (80 mg/dL)\nValuta se correggere.")
-                evento_stabile["stato"] = "limite_80"
+        if valore <= 80 and stato == "monitoraggio":
+            manda_telegram("⚠️ Sei al limite (80 mg/dL)\nValuta se correggere.")
+            evento_stabile["stato"] = "limite_80"
 
-            elif valore <= 75 and stato != "correzione":
-                manda_telegram("🚨 Glicemia a 75\nCorreggi subito con un succo o zuccheri.")
-                evento_stabile["stato"] = "correzione"
-                evento_stabile["pausa_fino"] = ora + timedelta(minutes=20)
+        elif valore <= 75 and stato != "correzione":
+            manda_telegram("🚨 Glicemia a 75 o meno\nCorreggi subito con un succo o zuccheri.\n🔕 Stop notifiche per 20 minuti.")
+            evento_stabile["stato"] = "correzione"
+            evento_stabile["pausa_fino"] = ora + timedelta(minutes=20)
 
         return evento_stabile
 
