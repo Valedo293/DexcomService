@@ -1,4 +1,3 @@
-
 from flask import Flask, jsonify, request
 from pydexcom import Dexcom
 from dotenv import load_dotenv
@@ -6,7 +5,7 @@ from flask_cors import CORS
 import os
 import requests
 from threading import Timer
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pymongo import MongoClient
 import time
 
@@ -36,18 +35,42 @@ mongo_client = MongoClient(MONGO_URI)
 mongo_db = mongo_client["nightscout"]
 entries_collection = mongo_db.entries
 
+# ---------------------------
+# Phase-lock & dedupe config
+# ---------------------------
+last_seen_ms = 0           # ultimo 'date' (epoch ms) scritto su Mongo
+POLL_OFFSET_SEC = 12       # esegui il poll ~12s dopo ogni multiplo di 5'
+
+def next_5min_delay_seconds(now_utc=None):
+    """Restituisce i secondi al prossimo multiplo di 5 minuti + offset (12s)."""
+    if now_utc is None:
+        now_utc = datetime.now(timezone.utc)
+    minute = now_utc.minute
+    next_bucket_min = (minute - (minute % 5)) + 5
+    next_bucket = now_utc.replace(minute=0, second=0, microsecond=0) + timedelta(
+        minutes=next_bucket_min, seconds=POLL_OFFSET_SEC
+    )
+    delay = (next_bucket - now_utc).total_seconds()
+    if delay < 1:
+        delay += 5 * 60
+    return delay
+
+# ---------------------------
+# Utilità
+# ---------------------------
 def scrivi_glicemia_su_mongo(valore, timestamp, direction="Flat"):
+    """Scrive una entry su Mongo lasciando UTC come prima."""
     try:
         entry = {
             "type": "sgv",
-            "sgv": valore,
-            "dateString": timestamp.strftime("%Y-%m-%dT%H:%M:%S"),
-            "date": int(timestamp.timestamp() * 1000),
+            "sgv": int(valore),
+            "dateString": timestamp.strftime("%Y-%m-%dT%H:%M:%S"),  # UTC (senza Z), come avevi
+            "date": int(timestamp.timestamp() * 1000),              # epoch ms
             "direction": direction,
             "device": "dexcom-server"
         }
         result = entries_collection.insert_one(entry)
-        print(f"[MONGO] Scritta glicemia {valore} - ID: {result.inserted_id}")
+        print(f"[MONGO] Scritta glicemia {valore} - ID: {result.inserted_id} - {entry['dateString']}Z dir={direction}")
     except Exception as e:
         print(f"❌ Errore scrittura Mongo: {e}")
 
@@ -70,6 +93,9 @@ def invia_ping(id_pasto, campo):
     except Exception as e:
         print(f"Errore ping {campo}: {e}")
 
+# ---------------------------
+# API
+# ---------------------------
 @app.route("/pianifica-ping", methods=["POST"])
 def pianifica_ping():
     try:
@@ -94,7 +120,7 @@ def ottieni_glicemia():
         if reading:
             return jsonify({
                 "glicemia": float(reading.value),
-                "trend": reading.trend_description,
+                "trend": getattr(reading, "trend_description", None) or getattr(reading, "trend_arrow", None) or "→",
             })
         else:
             return jsonify({"errore": "Nessuna lettura disponibile"}), 404
@@ -103,20 +129,19 @@ def ottieni_glicemia():
 
 @app.route("/glicemie-oggi", methods=["GET"])
 def glicemie_oggi():
+    """Ritorna le entry della giornata richiesta. Mantengo il tuo offset -2h come avevi (UTC 'come era')."""
     try:
         data_param = request.args.get("data")
         giorno = datetime.strptime(data_param, "%Y-%m-%d").date() if data_param else datetime.utcnow().date()
+        # lasciamo come avevi: finestra -2 ore
         inizio = datetime.combine(giorno, datetime.min.time()) - timedelta(hours=2)
         fine = datetime.combine(giorno, datetime.max.time()) - timedelta(hours=2)
 
-        timestamp_inizio = int(inizio.timestamp() * 1000)
-        timestamp_fine = int(fine.timestamp() * 1000)
+        timestamp_inizio = int(inizio.replace(tzinfo=timezone.utc).timestamp() * 1000)
+        timestamp_fine = int(fine.replace(tzinfo=timezone.utc).timestamp() * 1000)
 
         risultati = list(entries_collection.find({
-            "date": {
-                "$gte": timestamp_inizio,
-                "$lte": timestamp_fine
-            }
+            "date": {"$gte": timestamp_inizio, "$lte": timestamp_fine}
         }).sort("date", 1))
 
         for r in risultati:
@@ -126,6 +151,9 @@ def glicemie_oggi():
     except Exception as e:
         return jsonify({"errore": str(e)}), 500
 
+# ---------------------------
+# Telegram / Notifiche
+# ---------------------------
 def manda_telegram(messaggio):
     for chat_id in CHAT_IDS:
         try:
@@ -147,25 +175,13 @@ def reset_evento(codice):
 def manda_notifica(codice, titolo, messaggio):
     adesso = time.time()
     numero, ultimo = notifiche_inviate.get(codice, (0, 0))
-
     if numero >= 2 and (adesso - ultimo) < 1800:
         print(f"[SKIP] {codice} già inviato {numero} volte. Aspetto prima dei 30 minuti.")
         return
-
-def manda_notifica(codice, titolo, messaggio):
-    adesso = time.time()
-    numero, ultimo = notifiche_inviate.get(codice, (0, 0))
-
-    if numero >= 2 and (adesso - ultimo) < 1800:
-        print(f"[SKIP] {codice} già inviato {numero} volte. Aspetto prima dei 30 minuti.")
-        return
-
     print(f"[ALERT] {titolo} - {messaggio}")
     manda_telegram(f"🚨 {titolo}\n{messaggio}")
     notifiche_inviate[codice] = (numero + 1, adesso)
     eventi_attivi[codice] = True
-    eventi_attivi[codice] = True
-
 
 evento_stabile = {}
 
@@ -199,7 +215,7 @@ def gestisci_discesa_stabile(cronologia, evento_stabile):
                 "pausa_fino": None
             }
 
-        # 🚦 Avvio evento: 3 glicemie con discesa coerente da ≥90, tutte trend →
+        # 🚦 Avvio evento
         if not evento_stabile.get("attivo"):
             ultimi_3 = cronologia[-3:]
             if (
@@ -217,7 +233,7 @@ def gestisci_discesa_stabile(cronologia, evento_stabile):
                 }
             return evento_stabile
 
-        # 📡 Evento attivo: monitoraggio → limite_80 → correzione
+        # 📡 Evento attivo
         stato = evento_stabile.get("stato")
 
         if valore <= 80 and stato == "monitoraggio":
@@ -234,7 +250,6 @@ def gestisci_discesa_stabile(cronologia, evento_stabile):
     except Exception as e:
         print(f"❌ Errore in gestisci_discesa_stabile: {e}")
         return evento_stabile
-
 
 def monitor_loop():
     global evento_stabile
@@ -286,7 +301,11 @@ def monitor_loop():
     except Exception as e:
         print(f"❌ Errore loop monitor: {e}")
 
+# ---------------------------
+# POLL Dexcom -> Mongo (phase-locked + dedupe)
+# ---------------------------
 def invia_a_mongo():
+    global last_seen_ms
     try:
         dexcom = Dexcom(USERNAME, PASSWORD, ous=True)
         reading = dexcom.get_current_glucose_reading()
@@ -295,17 +314,33 @@ def invia_a_mongo():
             return
 
         valore = float(reading.value)
-        timestamp = reading.time
-        trend = reading.trend_arrow or "Flat"
+        timestamp = reading.time              # datetime aware in UTC
+        ts_ms = int(timestamp.timestamp() * 1000)
 
-        scrivi_glicemia_su_mongo(valore, timestamp, trend)
+        # Freccia: privilegia simbolo, poi descrizione, fallback "→"
+        direction = getattr(reading, "trend_arrow", None) or getattr(reading, "trend_description", None) or "→"
+
+        # DEDUPE: scrivi solo se nuova
+        if ts_ms > last_seen_ms:
+            scrivi_glicemia_su_mongo(valore, timestamp, direction)
+            last_seen_ms = ts_ms
+        else:
+            print("⏭️ Nessuna nuova lettura (dedupe)")
+
+        # opzionale: continua a usare il tuo monitor
         monitor_loop()
 
     except Exception as e:
         print(f"❌ Errore lettura/scrittura Dexcom: {e}")
     finally:
-        Timer(300, invia_a_mongo).start()
+        # PHASE-LOCK: ripianifica al prossimo boundary (…:00/05/10/…) + offset
+        delay = next_5min_delay_seconds()
+        Timer(delay, invia_a_mongo).start()
+        print(f"[Scheduler] prossimo poll tra {int(delay)}s")
 
+# ---------------------------
+# CORS headers
+# ---------------------------
 @app.after_request
 def after_request(response):
     response.headers.add("Access-Control-Allow-Origin", "*")
@@ -313,7 +348,10 @@ def after_request(response):
     response.headers.add("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
     return response
 
-# --- Avvio ---
-invia_a_mongo()
-app.run(host="0.0.0.0", port=5001)
-
+# ---------------------------
+# Avvio
+# ---------------------------
+if __name__ == "__main__":
+    # avvio phase-locked (invece del Timer(300,...))
+    Timer(next_5min_delay_seconds(), invia_a_mongo).start()
+    app.run(host="0.0.0.0", port=5001)
