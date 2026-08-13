@@ -1,16 +1,12 @@
 from flask import Flask, jsonify, request
-from pydexcom import Dexcom
+from dexcom_g7 import get_g7_reading
 from dotenv import load_dotenv
 from flask_cors import CORS
-import os
 import requests
 from datetime import datetime
 
 # Carica le variabili dal file .env
 load_dotenv()
-
-USERNAME = os.getenv("DEXCOM_USERNAME")
-PASSWORD = os.getenv("DEXCOM_PASSWORD")
 
 app = Flask(__name__)
 CORS(app)
@@ -19,11 +15,9 @@ CORS(app)
 @app.route("/glicemia")
 def glicemia():
     try:
-        if not USERNAME or not PASSWORD:
-            raise ValueError("Username o password mancanti")
-
-        dexcom = Dexcom(USERNAME, PASSWORD, ous=True)
-        reading = dexcom.get_current_glucose_reading()
+        reading = get_g7_reading()
+        if reading is None:
+            return jsonify({"errore": "Nessuna lettura G7 disponibile"}), 404
 
         return jsonify({
             "glicemia": reading.value,
@@ -36,8 +30,9 @@ def glicemia():
 # Funzione per inviare i ping al backend e al Google Sheet
 def invia_ping(distanza_minuti):
     try:
-        dexcom = Dexcom(USERNAME, PASSWORD, ous=True)
-        reading = dexcom.get_current_glucose_reading()
+        reading = get_g7_reading()
+        if reading is None:
+            return jsonify({"errore": "Nessuna lettura G7 disponibile"}), 404
 
         payload = {
             "data": datetime.now().strftime("%d/%m/%Y %H:%M"),
