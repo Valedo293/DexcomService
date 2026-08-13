@@ -1,6 +1,6 @@
 
 from flask import Flask, jsonify, request
-from pydexcom import Dexcom
+from dexcom_g7 import get_g7_reading
 from dotenv import load_dotenv
 from flask_cors import CORS
 import os
@@ -36,6 +36,12 @@ mongo_client = MongoClient(MONGO_URI)
 mongo_db = mongo_client["nightscout"]
 entries_collection = mongo_db.entries
 
+
+@app.route("/health", methods=["GET"])
+def health():
+    """Health check che non dipende dai servizi esterni."""
+    return jsonify({"status": "ok", "device": "dexcom-g7"})
+
 def scrivi_glicemia_su_mongo(valore, timestamp, direction="Flat"):
     try:
         entry = {
@@ -44,7 +50,7 @@ def scrivi_glicemia_su_mongo(valore, timestamp, direction="Flat"):
             "dateString": timestamp.strftime("%Y-%m-%dT%H:%M:%S"),
             "date": int(timestamp.timestamp() * 1000),
             "direction": direction,
-            "device": "dexcom-server"
+            "device": "dexcom-g7"
         }
         result = entries_collection.insert_one(entry)
         print(f"[MONGO] Scritta glicemia {valore} - ID: {result.inserted_id}")
@@ -62,8 +68,7 @@ def aggiorna_valore_tempo(id_pasto, campo, valore):
 
 def invia_ping(id_pasto, campo):
     try:
-        dexcom = Dexcom(USERNAME, PASSWORD, ous=True)
-        reading = dexcom.get_current_glucose_reading()
+        reading = get_g7_reading()
         if reading:
             valore = float(reading.value)
             aggiorna_valore_tempo(id_pasto, campo, valore)
@@ -89,8 +94,7 @@ def pianifica_ping():
 @app.route("/glicemia", methods=["GET"])
 def ottieni_glicemia():
     try:
-        dexcom = Dexcom(USERNAME, PASSWORD, ous=True)
-        reading = dexcom.get_current_glucose_reading()
+        reading = get_g7_reading()
         if reading:
             return jsonify({
                 "glicemia": float(reading.value),
@@ -288,8 +292,7 @@ def monitor_loop():
 
 def invia_a_mongo():
     try:
-        dexcom = Dexcom(USERNAME, PASSWORD, ous=True)
-        reading = dexcom.get_current_glucose_reading()
+        reading = get_g7_reading()
         if not reading:
             print("⚠️ Nessuna lettura disponibile da Dexcom")
             return
@@ -314,7 +317,11 @@ def after_request(response):
     return response
 
 # --- Avvio ---
-invia_a_mongo()
-app.run(host="0.0.0.0", port=5001)
+def start_background_sync():
+    """Avvia la sincronizzazione G7 senza bloccare l'import WSGI."""
+    Timer(0, invia_a_mongo).start()
 
 
+if __name__ == "__main__":
+    start_background_sync()
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", "5001")))
